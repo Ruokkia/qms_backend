@@ -1,6 +1,6 @@
 # qms-backend
 
-康力质量管理系统（QMS）后端工程。
+康立质量管理系统（QMS）后端工程。
 
 ## 技术栈
 - Spring Boot 2.7
