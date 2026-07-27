@@ -66,6 +66,11 @@
 
         <!-- BCrypt 密码加密（仅引入 crypto 模块，不启用完整 Security 链） -->
         <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-crypto</artifactId>
         </dependency>
