@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kangli.qms.mapper.ProductionDefectAnalyticsMapper">
+
+    <sql id="metricExpr">
+        <choose>
+            <when test="metric == 'repairCount'">COUNT(*)</when>
+            <when test="metric == 'scrapQty'">SUM(CASE WHEN repair_judgment_result = '报废' THEN 1 ELSE 0 END)</when>
+            <otherwise>COALESCE(SUM(defect_qty), 0)</otherwise>
+        </choose>
+    </sql>
+
+    <sql id="dimColumn">
+        <choose>
+            <when test="dim == 'defectCode'">defect_code</when>
+            <when test="dim == 'defectPhenomenon'">defect_phenomenon</when>
+            <otherwise>process</otherwise>
+        </choose>
+    </sql>
+
+    <sql id="granularityLiteral">
+        <choose>
+            <when test="granularity == 'WEEK'">'week'</when>
+            <when test="granularity == 'QUARTER'">'quarter'</when>
+            <otherwise>'month'</otherwise>
+        </choose>
+    </sql>
+
+    <sql id="draftFilter">
+        <if test="excludeDraft">
+            AND repair_status NOT IN ('待维修未提交', '待维修', '草稿')
+        </if>
+    </sql>
+
+    <select id="selectSeries" resultType="com.kangli.qms.vo.DefectTrendPointVO">
+        SELECT
+            TO_CHAR(date_trunc(<include refid="granularityLiteral"/>, send_repair_date), 'YYYY-MM-DD') AS period,
+            <include refid="metricExpr"/> AS metricValue,
+            COUNT(*) AS repairCount,
+            SUM(CASE WHEN repair_judgment_result = '报废' THEN 1 ELSE 0 END) AS scrapQty
+        FROM qms.production_repair
+        WHERE is_deleted = 0
+          AND plant_code = #{plantCode}
+          AND send_repair_date &gt;= #{start}::date
+          AND send_repair_date &lt;= #{end}::date
+          <include refid="draftFilter"/>
+        GROUP BY date_trunc(<include refid="granularityLiteral"/>, send_repair_date)
+        ORDER BY period
+    </select>
+
+    <select id="selectRank" resultType="com.kangli.qms.vo.DefectRankItemVO">
+        SELECT
+            <include refid="dimColumn"/> AS name,
+            <include refid="metricExpr"/> AS metricValue,
+            COUNT(*) AS repairCount,
+            SUM(CASE WHEN repair_judgment_result = '报废' THEN 1 ELSE 0 END) AS scrapQty,
+            ROUND(<include refid="metricExpr"/> * 100.0 / NULLIF(SUM(<include refid="metricExpr"/>) OVER (), 0), 2) AS sharePct
+        FROM qms.production_repair
+        WHERE is_deleted = 0
+          AND plant_code = #{plantCode}
+          AND send_repair_date &gt;= #{start}::date
+          AND send_repair_date &lt;= #{end}::date
+          <include refid="draftFilter"/>
+          AND <include refid="dimColumn"/> IS NOT NULL
+          AND <include refid="dimColumn"/> != ''
+        GROUP BY <include refid="dimColumn"/>
+        ORDER BY metricValue DESC
+        LIMIT #{topN}
+    </select>
+
+</mapper>

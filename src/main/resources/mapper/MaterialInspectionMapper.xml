@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kangli.qms.mapper.MaterialInspectionMapper">
+
+    <!-- ===== M1: 看板基本统计 ===== -->
+    <select id="selectStatsBase" resultType="com.kangli.qms.vo.MaterialInspectionStatsVO">
+        SELECT
+            COUNT(*)                                                        AS totalBatches,
+            COUNT(*) FILTER (WHERE inspection_result = '合格')             AS qualifiedBatches,
+            COUNT(*) FILTER (WHERE inspection_result = '不合格')           AS unqualifiedBatches,
+            ROUND(
+                CASE WHEN COUNT(*) = 0 THEN 0
+                ELSE COUNT(*) FILTER (WHERE inspection_result = '合格') * 100.0 / COUNT(*) END, 2
+            )                                                               AS qualifiedRate,
+            COUNT(*) FILTER (WHERE review_status = '待审核')               AS pendingReviewCount,
+            COUNT(*) FILTER (WHERE is_urgent = '是')                       AS urgentCount
+        FROM qms.material_inspection
+        WHERE is_deleted = 0 AND plant_code = #{plantCode}
+    </select>
+
+    <!-- ===== M1: 高频不合格描述 TOP10 ===== -->
+    <select id="selectTopDefectDesc" resultType="com.kangli.qms.vo.DefectDescItemVO">
+        SELECT defect_desc AS defectDesc, COUNT(*) AS count
+        FROM qms.material_inspection
+        WHERE is_deleted = 0
+          AND plant_code = #{plantCode}
+          AND defect_desc IS NOT NULL
+          AND defect_desc != ''
+        GROUP BY defect_desc
+        ORDER BY count DESC
+        LIMIT 10
+    </select>
+
+    <!-- ===== M1: 供应商合格率排名 ===== -->
+    <select id="selectSupplierRank" resultType="com.kangli.qms.vo.SupplierRankItemVO">
+        SELECT
+            supplier_name    AS supplierName,
+            supplier_code    AS supplierCode,
+            COUNT(*)         AS totalBatches,
+            ROUND(
+                COUNT(*) FILTER (WHERE inspection_result = '合格') * 100.0 / COUNT(*), 2
+            )                AS passRate
+        FROM qms.material_inspection
+        WHERE is_deleted = 0
+          AND plant_code = #{plantCode}
+          AND supplier_code IS NOT NULL
+        GROUP BY supplier_name, supplier_code
+        ORDER BY totalBatches DESC
+    </select>
+
+    <!-- ===== M1: 日统计趋势（最近30天） ===== -->
+    <select id="selectDailyTrend" resultType="com.kangli.qms.vo.DailyTrendItemVO">
+        SELECT
+            TO_CHAR(inspection_date, 'YYYY-MM-DD') AS date,
+            COUNT(*)                                AS totalBatches,
+            ROUND(
+                COUNT(*) FILTER (WHERE inspection_result = '合格') * 100.0 / COUNT(*), 2
+            )                                       AS passRate
+        FROM qms.material_inspection
+        WHERE is_deleted = 0
+          AND plant_code = #{plantCode}
+          AND inspection_date &gt;= CURRENT_DATE - 30
+        GROUP BY TO_CHAR(inspection_date, 'YYYY-MM-DD')
+        ORDER BY date
+    </select>
+
+    <!-- ===== M1: 未关联异常单的不合格来料记录（对账用） ===== -->
+    <select id="selectUnlinkedUnqualified" resultType="com.kangli.qms.entity.MaterialInspection">
+        SELECT
+            m.*
+        FROM qms.material_inspection m
+        WHERE m.is_deleted = 0
+          AND m.plant_code = #{plantCode}
+          AND m.inspection_result = #{inspectionResult}
+          AND m.created_at &gt;= #{startAt}
+          AND m.created_at &lt;= #{endAt}
+          AND NOT EXISTS (
+              SELECT 1 FROM qms.exception_order e
+              WHERE e.is_deleted = 0
+                AND e.source_type = #{sourceType}
+                AND e.source_id = m.id
+          )
+        ORDER BY m.created_at DESC
+    </select>
+
+    <select id="countUnqualifiedBatches" resultType="int">
+        SELECT COUNT(*)
+        FROM qms.material_inspection
+        WHERE is_deleted = 0
+          AND plant_code = #{plantCode}
+          AND supplier_code = #{supplierCode}
+          AND material_code = #{materialCode}
+          AND inspection_result = '不合格'
+          AND inspection_date &gt;= #{startDate}
+          AND inspection_date &lt;= #{endDate}
+    </select>
+
+    <!-- ===== M1: 重点供应商 Top5（近30天来料批次量最大） ===== -->
+    <select id="selectKeySuppliers" resultType="com.kangli.qms.vo.SupplierRankItemVO">
+        SELECT
+            supplier_code    AS supplierCode,
+            supplier_name    AS supplierName,
+            COUNT(*)         AS totalBatches,
+            ROUND(
+                COUNT(*) FILTER (WHERE inspection_result = '合格') * 100.0 / COUNT(*), 2
+            )                AS passRate
+        FROM qms.material_inspection
+        WHERE is_deleted = 0
+          AND plant_code = #{plantCode}
+          AND supplier_code IS NOT NULL
+          AND inspection_date &gt;= CURRENT_DATE - 30
+        GROUP BY supplier_code, supplier_name
+        ORDER BY totalBatches DESC
+        LIMIT 5
+    </select>
+
+    <!-- ===== M1: 重点供应商近30天每日合格率矩阵 ===== -->
+    <select id="selectKeySupplierTrend" resultType="com.kangli.qms.vo.KeySupplierTrendRowVO">
+        WITH top5 AS (
+            SELECT supplier_code, supplier_name
+            FROM qms.material_inspection
+            WHERE is_deleted = 0
+              AND plant_code = #{plantCode}
+              AND supplier_code IS NOT NULL
+              AND inspection_date &gt;= CURRENT_DATE - 30
+            GROUP BY supplier_code, supplier_name
+            ORDER BY COUNT(*) DESC
+            LIMIT 5
+        ),
+        ds AS (
+            SELECT generate_series(CURRENT_DATE - 29, CURRENT_DATE, '1 day')::date AS d
+        )
+        SELECT
+            t.supplier_code                                   AS supplierCode,
+            t.supplier_name                                   AS supplierName,
+            TO_CHAR(ds.d, 'YYYY-MM-DD')                       AS date,
+            ROUND(
+                COUNT(m.id) FILTER (WHERE m.inspection_result = '合格') * 100.0
+                / NULLIF(COUNT(m.id), 0), 2
+            )                                                 AS passRate
+        FROM top5 t
+        CROSS JOIN ds
+        LEFT JOIN qms.material_inspection m
+            ON m.supplier_code = t.supplier_code
+           AND m.is_deleted = 0
+           AND m.plant_code = #{plantCode}
+           AND m.inspection_date = ds.d
+        GROUP BY t.supplier_code, t.supplier_name, ds.d
+        ORDER BY t.supplier_code, ds.d
+    </select>
+
+</mapper>
+

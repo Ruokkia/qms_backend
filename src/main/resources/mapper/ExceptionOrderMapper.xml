@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kangli.qms.mapper.ExceptionOrderMapper">
+
+    <!-- ===== M2: KPI 看板统计 ===== -->
+    <select id="selectStats" resultType="com.kangli.qms.vo.ExceptionStatsVO">
+        SELECT
+            COUNT(*)                                                        AS totalExceptions,
+            COUNT(*) FILTER (WHERE status = '待整改')                       AS pendingCount,
+            COUNT(*) FILTER (WHERE status = '整改中')                       AS inProgressCount,
+            COUNT(*) FILTER (WHERE status = '待验证')                       AS pendingVerifyCount,
+            COUNT(*) FILTER (WHERE status = '已闭环')                       AS closedCount,
+            ROUND(
+                CASE WHEN COUNT(*) = 0 THEN 0
+                ELSE COUNT(*) FILTER (WHERE status = '已闭环') * 100.0 / COUNT(*) END, 2
+            )                                                               AS closureRate,
+            COUNT(*) FILTER (WHERE deadline &lt; CURRENT_DATE AND status != '已闭环') AS overdueCount,
+            (SELECT COUNT(*) FROM qms.escalation
+             WHERE is_deleted = 0 AND plant_code = #{plantCode} AND status = 'ACTIVE')  AS escalationCount
+        FROM qms.exception_order
+        WHERE is_deleted = 0 AND plant_code = #{plantCode}
+    </select>
+
+    <!-- ===== M2: 按严重等级分组 ===== -->
+    <select id="selectSeverityBreakdown" resultType="com.kangli.qms.vo.BreakdownItemVO">
+        SELECT severity AS name, COUNT(*) AS count
+        FROM qms.exception_order
+        WHERE is_deleted = 0 AND plant_code = #{plantCode}
+        GROUP BY severity
+        ORDER BY count DESC
+    </select>
+
+    <!-- ===== M2: 按来源类型分组 ===== -->
+    <select id="selectSourceBreakdown" resultType="com.kangli.qms.vo.BreakdownItemVO">
+        SELECT source_type AS name, COUNT(*) AS count
+        FROM qms.exception_order
+        WHERE is_deleted = 0 AND plant_code = #{plantCode}
+        GROUP BY source_type
+        ORDER BY count DESC
+    </select>
+
+    <!-- ===== M2: 多维度分析（动态 dimension） ===== -->
+    <select id="selectAnalysis" resultType="com.kangli.qms.vo.ExceptionAnalysisItemVO">
+        <choose>
+            <when test="dimension == 'defectDesc'">
+                SELECT defect_desc AS name, COUNT(*) AS count
+                FROM qms.exception_order
+                WHERE is_deleted = 0 AND plant_code = #{plantCode}
+                GROUP BY defect_desc
+                ORDER BY count DESC
+            </when>
+            <when test="dimension == 'supplier'">
+                SELECT COALESCE(s.supplier_name, '未关联') AS name, COUNT(*) AS count
+                FROM qms.exception_order e
+                LEFT JOIN qms.supplier s ON e.supplier_id = s.id AND (s.is_deleted = 0 OR s.is_deleted IS NULL)
+                WHERE e.is_deleted = 0 AND e.plant_code = #{plantCode}
+                GROUP BY s.supplier_name
+                ORDER BY count DESC
+            </when>
+            <when test="dimension == 'material'">
+                SELECT COALESCE(material_code, '未指定') AS name, COUNT(*) AS count
+                FROM qms.exception_order
+                WHERE is_deleted = 0 AND plant_code = #{plantCode}
+                GROUP BY material_code
+                ORDER BY count DESC
+            </when>
+            <when test="dimension == 'time'">
+                SELECT TO_CHAR(created_at, 'YYYY-MM-DD') AS name, COUNT(*) AS count
+                FROM qms.exception_order
+                WHERE is_deleted = 0 AND plant_code = #{plantCode}
+                GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
+                ORDER BY name
+            </when>
+            <otherwise>
+                SELECT defect_desc AS name, COUNT(*) AS count
+                FROM qms.exception_order
+                WHERE is_deleted = 0 AND plant_code = #{plantCode}
+                GROUP BY defect_desc
+                ORDER BY count DESC
+            </otherwise>
+        </choose>
+    </select>
+
+    <!-- ===== M2: 重复问题检查（质量判断只读取 material_inspection） ===== -->
+    <select id="selectRepeatExceptions" resultType="com.kangli.qms.vo.TriggeredSupplierVO">
+        SELECT
+            MAX(s.id)                AS supplierId,
+            MAX(m.supplier_name)     AS supplierName,
+            m.supplier_code          AS supplierCode,
+            m.material_code          AS materialCode,
+            MAX(m.defect_desc)       AS defectDesc,
+            COUNT(DISTINCT m.id)      AS repeatCount,
+            string_agg(DISTINCT e.id::text, ',')
+                FILTER (WHERE e.id IS NOT NULL) AS relatedExceptionIdsStr
+        FROM qms.material_inspection m
+        LEFT JOIN qms.supplier s
+          ON s.supplier_code = m.supplier_code
+         AND s.plant_code = m.plant_code
+         AND s.is_deleted = 0
+        LEFT JOIN qms.exception_order e
+          ON e.source_type = '来料不良'
+         AND e.source_id = m.id
+         AND e.is_deleted = 0
+        WHERE m.is_deleted = 0
+          AND m.plant_code = #{plantCode}
+          AND m.inspection_result = '不合格'
+          AND m.supplier_code IS NOT NULL
+          AND m.material_code IS NOT NULL
+          AND m.inspection_date &gt;= CURRENT_DATE - #{daysWindow}
+        GROUP BY m.supplier_code, m.material_code
+        HAVING COUNT(DISTINCT m.id) &gt;= #{minRepeatCount}
+        ORDER BY repeatCount DESC
+    </select>
+
+    <!-- ===== M2: 供应商来料不良频次汇总 ===== -->
+    <select id="selectSupplierSummary" resultType="com.kangli.qms.vo.SupplierExceptionSummaryVO">
+        SELECT
+            s.id                    AS supplierId,
+            s.supplier_name         AS supplierName,
+            s.supplier_code         AS supplierCode,
+            COUNT(*)                AS occurrenceCount,
+            MAX(TO_CHAR(e.created_at, 'YYYY-MM-DD HH24:MI:SS')) AS latestOccurrenceAt,
+            (SELECT inner_e.defect_desc
+             FROM qms.exception_order inner_e
+             WHERE inner_e.is_deleted = 0
+               AND inner_e.supplier_id = s.id
+               AND inner_e.source_type = '来料不良'
+               AND inner_e.plant_code = #{plantCode}
+               <if test="startDate != null and startDate != ''">
+                 AND inner_e.created_at &gt;= #{startDate}::timestamp
+               </if>
+               <if test="endDate != null and endDate != ''">
+                 AND inner_e.created_at &lt;= #{endDate}::timestamp + interval '1 day'
+               </if>
+             GROUP BY inner_e.defect_desc
+             ORDER BY COUNT(*) DESC
+             LIMIT 1)              AS topDefectDesc,
+            string_agg(e.id::text, ',' ORDER BY e.created_at DESC) AS relatedExceptionIdsStr
+        FROM qms.exception_order e
+        LEFT JOIN qms.supplier s ON e.supplier_id = s.id AND (s.is_deleted = 0 OR s.is_deleted IS NULL)
+        WHERE e.is_deleted = 0
+          AND e.plant_code = #{plantCode}
+          AND e.source_type = '来料不良'
+        <if test="supplierId != null">
+          AND e.supplier_id = #{supplierId}
+        </if>
+        <if test="startDate != null and startDate != ''">
+          AND e.created_at &gt;= #{startDate}::timestamp
+        </if>
+        <if test="endDate != null and endDate != ''">
+          AND e.created_at &lt;= #{endDate}::timestamp + interval '1 day'
+        </if>
+        GROUP BY s.id, s.supplier_name, s.supplier_code
+        HAVING COUNT(*) &gt;= COALESCE(#{minCount}, 1)
+        ORDER BY occurrenceCount DESC, s.supplier_name
+    </select>
+
+</mapper>
+
+

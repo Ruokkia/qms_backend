@@ -1,0 +1,63 @@
+package com.kangli.qms.security;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class PermissionResolverTest {
+
+    private final PermissionResolver resolver = new PermissionResolver();
+
+    @Test
+    void resolvesAdminRequestsAsSystemAdminPermissions() {
+        PermissionRequirement requirement = resolver.resolve("/api/v1/admin/users", "POST");
+
+        assertEquals("systemAdmin", requirement.getModuleCode());
+        assertEquals(PermissionAction.EDIT, requirement.getAction());
+    }
+
+    @Test
+    void resolvesReadRequestsAsViewPermissions() {
+        PermissionRequirement requirement = resolver.resolve("/api/v1/trace/records", "GET");
+
+        assertEquals("trace", requirement.getModuleCode());
+        assertEquals(PermissionAction.VIEW, requirement.getAction());
+    }
+
+    @Test
+    void resolvesIncomingTraceV2ReadRequestsAsTraceViewPermissions() {
+        PermissionRequirement requirement = resolver.resolve("/api/v2/incoming-trace/nodes", "GET");
+
+        assertEquals("trace", requirement.getModuleCode());
+        assertEquals(PermissionAction.VIEW, requirement.getAction());
+    }
+
+    @Test
+    void rejectsUnmappedApiRequestsByDefault() {
+        assertThrows(IllegalArgumentException.class,
+                () -> resolver.resolve("/api/v1/unmapped/resource", "GET"));
+    }
+
+    @Test
+    void mapsExistingNotificationAndRectificationRoutesToTheirBusinessModules() {
+        assertEquals("notification", resolver.resolve("/api/v1/notifications/unread", "GET").getModuleCode());
+        assertEquals("exception", resolver.resolve("/api/v1/rectification-plans/12", "PUT").getModuleCode());
+    }
+
+    @Test
+    void treatsMarkingOwnNotificationReadAsViewPermission() {
+        assertEquals(PermissionAction.VIEW,
+                resolver.resolve("/api/v1/notifications/12/read", "POST").getAction());
+        assertEquals(PermissionAction.VIEW,
+                resolver.resolve("/api/v1/notifications/read-all", "POST").getAction());
+    }
+
+    @Test
+    void reservesExceptionClosureAndSupplierEscalationReviewForApproval() {
+        assertEquals(PermissionAction.APPROVE,
+                resolver.resolve("/api/v1/exceptions/12/close", "POST").getAction());
+        assertEquals(PermissionAction.APPROVE,
+                resolver.resolve("/api/v1/escalations/8/review", "POST").getAction());
+    }
+}

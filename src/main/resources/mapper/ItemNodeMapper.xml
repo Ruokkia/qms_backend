@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kangli.qms.mapper.ItemNodeMapper">
+
+    <!-- ===== M0: 正向追溯（向下递归：起始节点 → 子节点） ===== -->
+    <select id="selectForwardTrace" resultType="com.kangli.qms.vo.TraceNodeVO">
+        WITH RECURSIVE trace_tree AS (
+            -- 锚点：起始节点（level=1）
+            SELECT id, node_type, node_code, parent_id, batch_id, qty_used, work_order_id, plant_code,
+                   1 AS level, node_code::text AS path
+            FROM qms.item_node
+            WHERE node_code = #{nodeCode}
+              AND is_deleted = 0
+              AND plant_code = #{plantCode}
+
+            UNION ALL
+
+            -- 递归：子节点（parent_id 关联上一层的 id）
+            SELECT child.id, child.node_type, child.node_code, child.parent_id, child.batch_id,
+                   child.qty_used, child.work_order_id, child.plant_code,
+                   parent.level + 1, parent.path || ' > ' || child.node_code
+            FROM qms.item_node child
+            JOIN trace_tree parent ON child.parent_id = parent.id
+            WHERE child.is_deleted = 0
+              AND parent.level &lt; #{maxLevel}
+        )
+        SELECT id, node_type, node_code, parent_id, batch_id, qty_used, work_order_id, plant_code, level, path
+        FROM trace_tree
+        ORDER BY level, id
+    </select>
+
+    <!-- ===== M0: 反向追溯（向上递归：起始节点 → 父节点） ===== -->
+    <select id="selectBackwardTrace" resultType="com.kangli.qms.vo.TraceNodeVO">
+        WITH RECURSIVE trace_up AS (
+            -- 锚点：起始节点（level=1）
+            SELECT id, node_type, node_code, parent_id, batch_id, qty_used, work_order_id, plant_code,
+                   1 AS level, node_code::text AS path
+            FROM qms.item_node
+            WHERE node_code = #{nodeCode}
+              AND is_deleted = 0
+              AND plant_code = #{plantCode}
+
+            UNION ALL
+
+            -- 递归：父节点（parent.id 关联上一层的 parent_id）
+            SELECT parent_node.id, parent_node.node_type, parent_node.node_code, parent_node.parent_id,
+                   parent_node.batch_id, parent_node.qty_used, parent_node.work_order_id, parent_node.plant_code,
+                   child.level + 1, parent_node.node_code || ' > ' || child.path
+            FROM qms.item_node parent_node
+            JOIN trace_up child ON parent_node.id = child.parent_id
+            WHERE parent_node.is_deleted = 0
+              AND child.level &lt; #{maxLevel}
+        )
+        SELECT id, node_type, node_code, parent_id, batch_id, qty_used, work_order_id, plant_code, level, path
+        FROM trace_up
+        ORDER BY level, id
+    </select>
+
+    <!-- ===== M0: 批量查询批次信息（来料批次关联 material_inspection） ===== -->
+    <select id="selectBatchInfoList" resultType="com.kangli.qms.vo.TraceBatchInfoVO">
+        SELECT
+            mi.id                   AS batchId,
+            mi.material_batch_no    AS batchNo,
+            mi.supplier_name        AS supplierName,
+            mi.supplier_code        AS supplierCode,
+            mi.material_code        AS materialCode,
+            mi.material_name        AS materialName,
+            mi.spec_model           AS specModel,
+            CASE
+                WHEN mi.inspection_result = '不合格' THEN '异常'
+                WHEN mi.review_status = '待审核' AND mi.inspection_result IS NULL THEN '待检'
+                WHEN mi.review_status = '待审核' AND mi.inspection_result IS NOT NULL THEN '在检'
+                ELSE '已检'
+            END                     AS iqcStatus,
+            mi.inspection_result    AS inspectionResult,
+            TO_CHAR(mi.arrival_date, 'YYYY-MM-DD') AS arrivalDate,
+            mi.qualified_qty        AS qty,
+            mi.defect_desc          AS defectDesc
+        FROM qms.material_inspection mi
+        WHERE mi.is_deleted = 0
+          AND mi.id IN
+        <foreach collection="batchIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <!-- ===== M0: 追溯看板统计（KPI） ===== -->
+    <select id="selectDashboardStats" resultType="com.kangli.qms.vo.TraceDashboardVO">
+        SELECT
+            mi_stats.total_batches       AS totalBatches,
+            mi_stats.qualified_batches   AS qualifiedBatches,
+            mi_stats.abnormal_batches    AS abnormalBatches,
+            mi_stats.in_check_batches    AS inCheckBatches,
+            ROUND(
+                CASE WHEN mi_stats.total_batches = 0 THEN 0
+                ELSE mi_stats.qualified_batches * 100.0 / mi_stats.total_batches END, 2
+            )                            AS passRate,
+            CASE WHEN COALESCE(mi_stats.total_submitted, 0) = 0 THEN 0
+                 ELSE ROUND(COALESCE(mi_stats.total_unqualified, 0) * 1000000.0 / mi_stats.total_submitted, 0)
+            END                          AS ppm,
+            (SELECT COUNT(*) FROM qms.supplier WHERE is_deleted = 0 AND plant_code = #{plantCode}) AS supplierCount,
+            (SELECT COUNT(*) FROM qms.item_node WHERE is_deleted = 0 AND plant_code = #{plantCode} AND node_type = 'SN') AS snCount,
+            (SELECT COUNT(*) FROM qms.item_node WHERE is_deleted = 0 AND plant_code = #{plantCode}) AS nodeCount
+        FROM (
+            SELECT
+                COUNT(*)                                                    AS total_batches,
+                COUNT(*) FILTER (WHERE inspection_result = '合格')         AS qualified_batches,
+                COUNT(*) FILTER (WHERE inspection_result = '不合格')       AS abnormal_batches,
+                COUNT(*) FILTER (WHERE review_status = '待审核' AND inspection_result IS NULL) AS in_check_batches,
+                COALESCE(SUM(submitted_qty), 0)                             AS total_submitted,
+                COALESCE(SUM(unqualified_qty), 0)                           AS total_unqualified
+            FROM qms.material_inspection
+            WHERE is_deleted = 0 AND plant_code = #{plantCode}
+        ) mi_stats
+    </select>
+
+</mapper>

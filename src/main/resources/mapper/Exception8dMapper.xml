@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kangli.qms.mapper.Exception8dMapper">
+
+    <!-- 按异常单ID查询 8D 报告（仅未删除） -->
+    <select id="selectByExceptionId" resultType="com.kangli.qms.entity.Exception8d">
+        SELECT * FROM qms.exception_8d
+        WHERE is_deleted = 0
+          AND exception_id = #{exceptionId}
+        LIMIT 1
+    </select>
+
+    <!-- 按异常单ID查询 8D 报告（含已软删除，用于重置后恢复场景） -->
+    <select id="selectByExceptionIdIgnoreDeleted" resultType="com.kangli.qms.entity.Exception8d">
+        SELECT * FROM qms.exception_8d
+        WHERE exception_id = #{exceptionId}
+        LIMIT 1
+    </select>
+
+    <!-- 穿透 @TableLogic 恢复已软删除记录：仅翻转 is_deleted 标志位 -->
+    <update id="restoreDeletedById">
+        UPDATE qms.exception_8d
+        SET is_deleted = 0, updated_at = NOW()
+        WHERE id = #{id} AND is_deleted = 1
+    </update>
+
+</mapper>
