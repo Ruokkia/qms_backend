@@ -21,8 +21,7 @@ public class LoginDTO {
     @ApiModelProperty(value = "密码", example = "123456", required = true)
     private String password;
 
-    @NotBlank(message = "分公司编码不能为空")
-    @ApiModelProperty(value = "分公司编码 SZ=深圳 MZ=梅州", example = "SZ", required = true)
+    @ApiModelProperty(value = "分公司编码 SZ=深圳 MZ=梅州（可选，登录不再强制要求，默认按账号所属公司）", example = "SZ", required = false)
     private String plantCode;
 
 }

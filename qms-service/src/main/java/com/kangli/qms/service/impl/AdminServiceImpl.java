@@ -34,6 +34,9 @@ import java.util.stream.Collectors;
 @Service
 public class AdminServiceImpl implements AdminService {
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final List<String> SYSTEM_ADMIN_ROLES = List.of("R00", "R06");
+    private static final List<String> SYSTEM_ADMIN_PERMISSIONS = List.of(
+            "systemAdmin:VIEW", "systemAdmin:EDIT", "systemAdmin:APPROVE", "systemAdmin:EXPORT");
     private final SysUserMapper userMapper;
     private final SysRoleMapper roleMapper;
     private final SysRolePermissionMapper permissionMapper;
@@ -98,8 +101,9 @@ public class AdminServiceImpl implements AdminService {
     @Override @Transactional public RolePermissionVO updateRolePermissions(String roleCode, RolePermissionRequest request, String ip) {
         if (!"OWN_PLANT".equals(request.getDataScope()) && !"ALL_PLANTS".equals(request.getDataScope())) throw new BusinessException(ResultCode.BAD_REQUEST, "数据范围无效");
         SysRole role = requireRole(roleCode); role.setDataScope(request.getDataScope()); roleMapper.updateById(role);
+        List<String> permissions = normalizeSystemAdminPermissions(roleCode, request.getPermissions());
         permissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>().eq(SysRolePermission::getRoleCode, roleCode));
-        for (String permission : request.getPermissions() == null ? new ArrayList<String>() : request.getPermissions()) {
+        for (String permission : permissions) {
             String[] parts = permission.split(":", 2); if (parts.length != 2) throw new BusinessException(ResultCode.BAD_REQUEST, "权限格式必须为 模块:操作");
             SysRolePermission item = new SysRolePermission(); item.setRoleCode(roleCode); item.setModuleCode(parts[0]); item.setActionCode(parts[1]); permissionMapper.insert(item);
         }
@@ -115,6 +119,19 @@ public class AdminServiceImpl implements AdminService {
     }
 
     private void invalidateAndSave(SysUser user) { invalidate(user); userMapper.updateById(user); }
+    private List<String> normalizeSystemAdminPermissions(String roleCode, List<String> requestedPermissions) {
+        List<String> permissions = new ArrayList<>(requestedPermissions == null ? List.of() : requestedPermissions);
+        boolean hasSystemAdminPermission = permissions.stream().anyMatch(permission -> permission.startsWith("systemAdmin:"));
+        if (!SYSTEM_ADMIN_ROLES.contains(roleCode) && hasSystemAdminPermission) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "系统管理菜单仅允许授权给 R00 和 R06");
+        }
+        if (SYSTEM_ADMIN_ROLES.contains(roleCode)) {
+            for (String permission : SYSTEM_ADMIN_PERMISSIONS) {
+                if (!permissions.contains(permission)) permissions.add(permission);
+            }
+        }
+        return permissions;
+    }
     private void invalidate(SysUser user) { user.setAuthVersion((user.getAuthVersion() == null ? 1 : user.getAuthVersion()) + 1); }
     private SysUser requireUser(Long id) { SysUser user = userMapper.selectById(id); if (user == null) throw new BusinessException(ResultCode.NOT_FOUND, "账号不存在"); return user; }
     private SysRole requireRole(String roleCode) { SysRole role = roleMapper.selectOne(new LambdaQueryWrapper<SysRole>().eq(SysRole::getRoleCode, roleCode)); if (role == null) throw new BusinessException(ResultCode.NOT_FOUND, "角色不存在"); return role; }

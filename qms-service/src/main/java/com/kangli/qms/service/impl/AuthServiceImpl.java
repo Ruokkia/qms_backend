@@ -74,58 +74,49 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginVO login(LoginDTO dto, String loginIp) {
         String account = dto.getAccount().trim();
-        String plantCodeStr = dto.getPlantCode().trim().toUpperCase();
 
-        // 1. 校验分公司编码合法性
-        PlantCode requestPlant = PlantCode.of(plantCodeStr);
-        if (requestPlant == null) {
-            log.warn("[登录失败] 非法分公司编码={} account={}", plantCodeStr, account);
-            throw new BusinessException(ResultCode.BAD_REQUEST, "分公司编码非法，仅支持 SZ/MZ");
-        }
-
-        // 2. 检查账号是否被锁定（Redis 优先，DB 兜底）
+        // 1. 检查账号是否被锁定（Redis 优先，DB 兜底）
         checkAccountLocked(account);
 
-        // 3. 查询用户
+        // 2. 查询用户
         SysUser user = userMapper.selectOne(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getAccount, account));
+        PlantCode userPlant = user != null ? PlantCode.of(user.getPlantCode()) : null;
+
         if (user == null) {
-            recordLoginFailure(account, null, requestPlant, loginIp, "账号不存在");
+            recordLoginFailure(account, null, null, loginIp, "账号不存在");
             throw new BusinessException(ResultCode.ACCOUNT_OR_PASSWORD_ERROR);
         }
 
-        // 5. 校验分公司匹配
-        if (!requestPlant.name().equals(user.getPlantCode())) {
-            recordLoginFailure(account, user.getId(), requestPlant, loginIp, "分公司不匹配");
-            throw new BusinessException(ResultCode.PLANT_CODE_MISMATCH);
-        }
-
-        // 6. 校验账号状态
+        // 3. 校验账号状态
         if (user.getStatus() != null && user.getStatus() == 0) {
-            recordLoginFailure(account, user.getId(), requestPlant, loginIp, "账号已禁用");
+            recordLoginFailure(account, user.getId(), userPlant, loginIp, "账号已禁用");
             throw new BusinessException(ResultCode.ACCOUNT_DISABLED);
         }
 
-        // 7. 校验密码（BCrypt）
+        // 4. 校验密码（BCrypt）
         if (!passwordEncoder.matches(dto.getPassword(), user.getPasswordHash())) {
-            recordLoginFailure(account, user.getId(), requestPlant, loginIp, "密码错误");
+            recordLoginFailure(account, user.getId(), userPlant, loginIp, "密码错误");
             throw new BusinessException(ResultCode.ACCOUNT_OR_PASSWORD_ERROR);
         }
 
-        // 8. 登录成功：清除失败计数
+        // 5. 登录成功：清除失败计数
         redisUtil.delete(AuthConstants.failCountKey(account));
         redisUtil.delete(AuthConstants.lockKey(account));
 
-        // 9. 查询角色名称
+        // 6. 查询角色名称
         SysRole role = roleMapper.selectOne(new LambdaQueryWrapper<SysRole>()
                 .eq(SysRole::getRoleCode, user.getRoleCode()));
         String roleName = (role != null) ? role.getRoleName() : "";
 
-        // 10. 判断是否可切换分公司（根据角色 data_scope 判断，ALL_PLANTS 即可切换）
+        // 7. 判断是否可切换分公司（根据角色 data_scope 判断，ALL_PLANTS 即可切换）
         boolean canSwitch = role != null && "ALL_PLANTS".equals(role.getDataScope());
 
-        // 11. 生成双 Token
-        PlantCode userPlant = PlantCode.of(user.getPlantCode());
+        // 8. 生成双 Token
+        if (userPlant == null) {
+            log.error("[登录失败] 用户分公司信息缺失 account={}", account);
+            throw new BusinessException(ResultCode.INTERNAL_ERROR, "用户分公司信息缺失，请联系管理员");
+        }
         int authVersion = user.getAuthVersion() == null ? 1 : user.getAuthVersion();
         String accessToken = jwtUtil.generateAccessToken(user.getId(), account,
                 user.getRoleCode(), userPlant, canSwitch, authVersion);
