@@ -37,6 +37,9 @@ public class UserInfoVO implements Serializable {
     @ApiModelProperty(value = "分公司名称", example = "深圳")
     private String plantName;
 
+    @ApiModelProperty(value = "是否可切换分公司", example = "true")
+    private boolean canSwitchArea;
+
     @ApiModelProperty(value = "状态 1=启用 0=禁用", example = "1")
     private Short status;
 

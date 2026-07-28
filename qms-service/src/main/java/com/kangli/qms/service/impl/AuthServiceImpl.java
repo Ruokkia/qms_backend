@@ -150,7 +150,7 @@ public class AuthServiceImpl implements AuthService {
                 user.getId(), account, userPlant, user.getRoleCode());
 
         // 15. 组装响应
-        return buildLoginVO(accessToken, refreshToken, user, roleName);
+        return buildLoginVO(accessToken, refreshToken, user, roleName, canSwitch);
     }
 
     @Override
@@ -215,7 +215,7 @@ public class AuthServiceImpl implements AuthService {
 
         log.info("[Token刷新成功] userId={}, account={}", user.getId(), user.getAccount());
 
-        return buildLoginVO(newAccessToken, newRefreshToken, user, roleName);
+        return buildLoginVO(newAccessToken, newRefreshToken, user, roleName, canSwitch);
     }
 
     @Override
@@ -274,6 +274,7 @@ public class AuthServiceImpl implements AuthService {
         vo.setRoleName(roleName);
         vo.setPlantCode(user.getPlantCode());
         vo.setPlantName(user.getPlantName());
+        vo.setCanSwitchArea(role != null && "ALL_PLANTS".equals(role.getDataScope()));
         vo.setStatus(user.getStatus());
         vo.setLastLoginAt(user.getLastLoginAt() != null
                 ? user.getLastLoginAt().format(DT_FMT) : null);
@@ -351,7 +352,7 @@ public class AuthServiceImpl implements AuthService {
      * 组装登录响应 VO。
      */
     private LoginVO buildLoginVO(String accessToken, String refreshToken,
-                                 SysUser user, String roleName) {
+                                 SysUser user, String roleName, boolean canSwitchArea) {
         UserInfoVO userInfo = new UserInfoVO();
         userInfo.setUserId(user.getId());
         userInfo.setAccount(user.getAccount());
@@ -360,6 +361,7 @@ public class AuthServiceImpl implements AuthService {
         userInfo.setRoleName(roleName);
         userInfo.setPlantCode(user.getPlantCode());
         userInfo.setPlantName(user.getPlantName());
+        userInfo.setCanSwitchArea(canSwitchArea);
         userInfo.setStatus(user.getStatus());
         userInfo.setModulePermissions(modulePermissions(user.getRoleCode()));
 
