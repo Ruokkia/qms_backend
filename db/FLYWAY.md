@@ -16,10 +16,9 @@ the creation timestamp in `yyyyMMddHHmmssSSS` format, for example
 `V20260728101530123__add_supplier_level.sql`. This prevents version conflicts
 when several developers create migrations in parallel.
 
-The old files under `db/ddl/` and `db/seed/` are retained only as export
-sources. `db/legacy-seed/` is historical reference material and is not run by
-Flyway. The combined file in `db/release/` is for manual empty-database import
-only and is not a Flyway migration.
+`db/legacy-seed/` is historical reference material and is not run by Flyway.
+The canonical database definition is exclusively the versioned scripts under
+`src/main/resources/db/migration/`.
 
 An existing database without `qms.flyway_schema_history` is baselined at
 `20260727161504202` on first startup. It must already match the current
