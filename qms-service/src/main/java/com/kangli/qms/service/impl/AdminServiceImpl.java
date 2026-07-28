@@ -90,7 +90,7 @@ public class AdminServiceImpl implements AdminService {
     @Override public List<RolePermissionVO> listRoles() { return roleMapper.selectList(new LambdaQueryWrapper<SysRole>().orderByAsc(SysRole::getRoleCode)).stream().map(role -> getRolePermissions(role.getRoleCode())).collect(Collectors.toList()); }
 
     @Override public RolePermissionVO getRolePermissions(String roleCode) {
-        SysRole role = requireRole(roleCode); RolePermissionVO vo = new RolePermissionVO(); vo.setRoleCode(role.getRoleCode()); vo.setRoleName(role.getRoleName()); vo.setDataScope(role.getDataScope());
+        SysRole role = requireRole(roleCode); RolePermissionVO vo = new RolePermissionVO(); vo.setRoleCode(role.getRoleCode()); vo.setRoleName(role.getRoleName()); vo.setDataScope(role.getDataScope()); vo.setVersion(role.getVersion());
         boolean allPlants = "ALL_PLANTS".equals(role.getDataScope());
         vo.setDataScopeName(allPlants ? "全部分公司数据" : "仅本分公司数据");
         vo.setDataScopeDescription(allPlants ? "可在深圳与梅州之间切换并查看对应数据" : "仅能查看和操作本人所属分公司的数据");
@@ -100,7 +100,14 @@ public class AdminServiceImpl implements AdminService {
 
     @Override @Transactional public RolePermissionVO updateRolePermissions(String roleCode, RolePermissionRequest request, String ip) {
         if (!"OWN_PLANT".equals(request.getDataScope()) && !"ALL_PLANTS".equals(request.getDataScope())) throw new BusinessException(ResultCode.BAD_REQUEST, "数据范围无效");
-        SysRole role = requireRole(roleCode); role.setDataScope(request.getDataScope()); roleMapper.updateById(role);
+        SysRole role = requireRole(roleCode);
+        if (!request.getVersion().equals(role.getVersion())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "角色权限已被其他管理员修改，请刷新后重试");
+        }
+        role.setDataScope(request.getDataScope());
+        if (roleMapper.updateById(role) != 1) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "角色权限已被其他管理员修改，请刷新后重试");
+        }
         List<String> permissions = normalizeSystemAdminPermissions(roleCode, request.getPermissions());
         permissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>().eq(SysRolePermission::getRoleCode, roleCode));
         for (String permission : permissions) {

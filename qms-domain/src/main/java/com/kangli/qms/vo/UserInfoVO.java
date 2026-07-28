@@ -5,6 +5,7 @@ import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.List;
 
 /**
  * 用户信息 VO（与前端 UserInfo 类型对齐）。
@@ -41,4 +42,7 @@ public class UserInfoVO implements Serializable {
 
     @ApiModelProperty(value = "最后登录时间", example = "2026-07-17 10:30:00")
     private String lastLoginAt;
+
+    @ApiModelProperty(value = "当前角色可见的业务菜单编码")
+    private List<String> modulePermissions;
 }

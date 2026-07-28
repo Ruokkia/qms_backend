@@ -11,10 +11,12 @@ import com.kangli.qms.dto.LoginDTO;
 import com.kangli.qms.dto.RefreshDTO;
 import com.kangli.qms.entity.SysLoginLog;
 import com.kangli.qms.entity.SysRole;
+import com.kangli.qms.entity.SysRolePermission;
 import com.kangli.qms.entity.SysUser;
 import com.kangli.qms.enums.PlantCode;
 import com.kangli.qms.mapper.SysLoginLogMapper;
 import com.kangli.qms.mapper.SysRoleMapper;
+import com.kangli.qms.mapper.SysRolePermissionMapper;
 import com.kangli.qms.mapper.SysUserMapper;
 import com.kangli.qms.service.AuthService;
 import com.kangli.qms.util.JwtUtil;
@@ -29,6 +31,8 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 认证服务实现。
@@ -50,20 +54,25 @@ public class AuthServiceImpl implements AuthService {
 
     /** 日期时间格式（与前端对齐） */
     private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final List<String> SUPER_ADMIN_MODULES = List.of(
+            "systemAdmin", "trace", "incoming", "exception", "fai", "spc",
+            "productionDefect", "processTools", "finishedGoods");
 
     private final SysUserMapper userMapper;
     private final SysRoleMapper roleMapper;
+    private final SysRolePermissionMapper rolePermissionMapper;
     private final SysLoginLogMapper loginLogMapper;
     private final JwtUtil jwtUtil;
     private final RedisUtil redisUtil;
     private final LoginProperties loginProps;
     private final BCryptPasswordEncoder passwordEncoder;
 
-    public AuthServiceImpl(SysUserMapper userMapper, SysRoleMapper roleMapper,
+    public AuthServiceImpl(SysUserMapper userMapper, SysRoleMapper roleMapper, SysRolePermissionMapper rolePermissionMapper,
                            SysLoginLogMapper loginLogMapper, JwtUtil jwtUtil,
                            RedisUtil redisUtil, LoginProperties loginProps) {
         this.userMapper = userMapper;
         this.roleMapper = roleMapper;
+        this.rolePermissionMapper = rolePermissionMapper;
         this.loginLogMapper = loginLogMapper;
         this.jwtUtil = jwtUtil;
         this.redisUtil = redisUtil;
@@ -268,6 +277,7 @@ public class AuthServiceImpl implements AuthService {
         vo.setStatus(user.getStatus());
         vo.setLastLoginAt(user.getLastLoginAt() != null
                 ? user.getLastLoginAt().format(DT_FMT) : null);
+        vo.setModulePermissions(modulePermissions(user.getRoleCode()));
         return vo;
     }
 
@@ -351,6 +361,7 @@ public class AuthServiceImpl implements AuthService {
         userInfo.setPlantCode(user.getPlantCode());
         userInfo.setPlantName(user.getPlantName());
         userInfo.setStatus(user.getStatus());
+        userInfo.setModulePermissions(modulePermissions(user.getRoleCode()));
 
         LoginVO vo = new LoginVO();
         vo.setToken(accessToken);
@@ -368,6 +379,18 @@ public class AuthServiceImpl implements AuthService {
             return ((Number) obj).longValue();
         }
         return Long.parseLong(obj.toString());
+    }
+
+    private List<String> modulePermissions(String roleCode) {
+        if ("R00".equals(roleCode)) {
+            return SUPER_ADMIN_MODULES;
+        }
+        return rolePermissionMapper.selectList(new LambdaQueryWrapper<SysRolePermission>()
+                        .eq(SysRolePermission::getRoleCode, roleCode))
+                .stream()
+                .map(SysRolePermission::getModuleCode)
+                .distinct()
+                .collect(Collectors.toList());
     }
 
     /**
