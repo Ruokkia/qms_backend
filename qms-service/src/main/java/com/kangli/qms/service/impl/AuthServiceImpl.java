@@ -9,7 +9,9 @@ import com.kangli.qms.common.ResultCode;
 import com.kangli.qms.config.LoginProperties;
 import com.kangli.qms.dto.LoginDTO;
 import com.kangli.qms.dto.RefreshDTO;
+import com.kangli.qms.dto.ChangePasswordDTO;
 import com.kangli.qms.entity.SysLoginLog;
+import com.kangli.qms.entity.AuditLog;
 import com.kangli.qms.entity.SysRole;
 import com.kangli.qms.entity.SysRolePermission;
 import com.kangli.qms.entity.SysUser;
@@ -18,6 +20,7 @@ import com.kangli.qms.mapper.SysLoginLogMapper;
 import com.kangli.qms.mapper.SysRoleMapper;
 import com.kangli.qms.mapper.SysRolePermissionMapper;
 import com.kangli.qms.mapper.SysUserMapper;
+import com.kangli.qms.mapper.AuditLogMapper;
 import com.kangli.qms.service.AuthService;
 import com.kangli.qms.util.JwtUtil;
 import com.kangli.qms.util.RedisUtil;
@@ -27,6 +30,7 @@ import io.jsonwebtoken.Claims;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
@@ -62,6 +66,7 @@ public class AuthServiceImpl implements AuthService {
     private final SysRoleMapper roleMapper;
     private final SysRolePermissionMapper rolePermissionMapper;
     private final SysLoginLogMapper loginLogMapper;
+    private final AuditLogMapper auditLogMapper;
     private final JwtUtil jwtUtil;
     private final RedisUtil redisUtil;
     private final LoginProperties loginProps;
@@ -69,11 +74,12 @@ public class AuthServiceImpl implements AuthService {
 
     public AuthServiceImpl(SysUserMapper userMapper, SysRoleMapper roleMapper, SysRolePermissionMapper rolePermissionMapper,
                            SysLoginLogMapper loginLogMapper, JwtUtil jwtUtil,
-                           RedisUtil redisUtil, LoginProperties loginProps) {
+                           RedisUtil redisUtil, LoginProperties loginProps, AuditLogMapper auditLogMapper) {
         this.userMapper = userMapper;
         this.roleMapper = roleMapper;
         this.rolePermissionMapper = rolePermissionMapper;
         this.loginLogMapper = loginLogMapper;
+        this.auditLogMapper = auditLogMapper;
         this.jwtUtil = jwtUtil;
         this.redisUtil = redisUtil;
         this.loginProps = loginProps;
@@ -248,6 +254,32 @@ public class AuthServiceImpl implements AuthService {
         if (loginUser != null) {
             log.info("[登出成功] userId={}, account={}", loginUser.getUserId(), loginUser.getAccount());
         }
+    }
+
+    @Override
+    @Transactional
+    public void changePassword(ChangePasswordDTO dto) {
+        LoginUser loginUser = LoginUserHolder.get();
+        if (loginUser == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
+        SysUser user = userMapper.selectById(loginUser.getUserId());
+        if (user == null) throw new BusinessException(ResultCode.NOT_FOUND, "用户不存在");
+        if (!passwordEncoder.matches(dto.getCurrentPassword(), user.getPasswordHash())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "当前密码不正确");
+        }
+        if (!dto.getNewPassword().equals(dto.getConfirmPassword())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "两次输入的新密码不一致");
+        }
+        if (passwordEncoder.matches(dto.getNewPassword(), user.getPasswordHash())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "新密码不能与当前密码相同");
+        }
+        user.setPasswordHash(passwordEncoder.encode(dto.getNewPassword()));
+        user.setAuthVersion((user.getAuthVersion() == null ? 1 : user.getAuthVersion()) + 1);
+        userMapper.updateById(user);
+        AuditLog auditLog = new AuditLog();
+        auditLog.setTableName("sys_user"); auditLog.setRecordId(user.getId()); auditLog.setOperationType("CHANGE_PASSWORD");
+        auditLog.setAfterData("用户自主修改密码"); auditLog.setOperatorId(user.getId()); auditLog.setOperatorName(user.getAccount());
+        auditLog.setPlantCode(user.getPlantCode()); auditLogMapper.insert(auditLog);
+        log.info("[密码已修改] userId={}, account={}", user.getId(), user.getAccount());
     }
 
     @Override

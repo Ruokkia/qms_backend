@@ -27,6 +27,7 @@ import com.kangli.qms.vo.PermissionDisplayVO;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,11 +59,13 @@ public class AdminServiceImpl implements AdminService {
     @Override @Transactional public AdminUserVO createUser(AdminUserRequest request, String ip) {
         if (userMapper.selectCount(new LambdaQueryWrapper<SysUser>().eq(SysUser::getAccount, request.getAccount().trim())) > 0) throw new BusinessException(ResultCode.BAD_REQUEST, "账号已存在");
         validateRoleAndPlant(request.getRoleCode(), request.getPlantCode());
-        if (request.getPassword() == null || request.getPassword().trim().length() < 6) throw new BusinessException(ResultCode.BAD_REQUEST, "初始密码至少 6 位");
+        String initialPassword = request.getPassword() == null || request.getPassword().trim().isEmpty()
+                ? "123456" : request.getPassword().trim();
+        if (initialPassword.length() < 6) throw new BusinessException(ResultCode.BAD_REQUEST, "初始密码至少 6 位");
         SysUser user = new SysUser();
         user.setAccount(request.getAccount().trim()); user.setRealName(request.getRealName().trim()); user.setRoleCode(request.getRoleCode());
         user.setPlantCode(request.getPlantCode()); user.setPlantName(plantName(request.getPlantCode(), request.getPlantName()));
-        user.setPasswordHash(passwordEncoder.encode(request.getPassword())); user.setStatus((short) 1); user.setAuthVersion(1);
+        user.setPasswordHash(passwordEncoder.encode(initialPassword)); user.setStatus((short) 1); user.setAuthVersion(1);
         userMapper.insert(user); audit("CREATE_USER", user.getId(), request.getReason(), ip, user.getAccount()); return toUserVO(user);
     }
 
@@ -110,6 +113,9 @@ public class AdminServiceImpl implements AdminService {
         role.setPlantName("全局");
         role.setDataScope(request.getDataScope());
         role.setVersion(1);
+        LocalDateTime now = LocalDateTime.now();
+        role.setCreatedAt(now);
+        role.setUpdatedAt(now);
         roleMapper.insert(role);
         replacePermissions(roleCode, permissions);
         audit("CREATE_ROLE", role.getId(), request.getReason(), ip, roleCode + "/" + role.getRoleName());

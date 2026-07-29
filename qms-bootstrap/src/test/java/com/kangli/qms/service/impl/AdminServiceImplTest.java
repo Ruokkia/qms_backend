@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.kangli.qms.dto.RolePermissionRequest;
 import com.kangli.qms.dto.RoleCreateRequest;
 import com.kangli.qms.dto.AdminActionRequest;
+import com.kangli.qms.dto.AdminUserRequest;
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.entity.AuditLog;
 import com.kangli.qms.entity.SysRole;
@@ -21,11 +22,46 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 class AdminServiceImplTest {
+
+    @Test
+    void createUser_shouldUseDefaultPasswordWhenPasswordIsBlank() {
+        SysUserMapper userMapper = mock(SysUserMapper.class);
+        SysRoleMapper roleMapper = mock(SysRoleMapper.class);
+        SysRolePermissionMapper permissionMapper = mock(SysRolePermissionMapper.class);
+        AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
+        RedisUtil redisUtil = mock(RedisUtil.class);
+        AdminServiceImpl service = new AdminServiceImpl(userMapper, roleMapper, permissionMapper, auditLogMapper, redisUtil);
+        AtomicReference<SysUser> insertedUser = new AtomicReference<>();
+        SysRole role = new SysRole();
+        role.setRoleCode("R01");
+        when(userMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        when(roleMapper.selectOne(any(Wrapper.class))).thenReturn(role);
+        when(userMapper.insert(any(SysUser.class))).thenAnswer(invocation -> {
+            SysUser user = invocation.getArgument(0);
+            user.setId(501L);
+            insertedUser.set(user);
+            return 1;
+        });
+
+        AdminUserRequest request = new AdminUserRequest();
+        request.setAccount("default_pwd_user");
+        request.setRealName("默认密码测试");
+        request.setRoleCode("R01");
+        request.setPlantCode("SZ");
+        request.setPassword("   ");
+
+        service.createUser(request, "127.0.0.1");
+
+        assertTrue(new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder()
+                .matches("123456", insertedUser.get().getPasswordHash()));
+    }
 
     @Test
     void updateRolePermissions_shouldAuditWithRoleDatabaseId() {
@@ -142,6 +178,38 @@ class AdminServiceImplTest {
         ArgumentCaptor<AuditLog> auditCaptor = ArgumentCaptor.forClass(AuditLog.class);
         verify(auditLogMapper).insert(auditCaptor.capture());
         assertEquals("CREATE_ROLE", auditCaptor.getValue().getOperationType());
+    }
+
+    @Test
+    void createRole_shouldPopulateRequiredAuditTimestamps() {
+        SysUserMapper userMapper = mock(SysUserMapper.class);
+        SysRoleMapper roleMapper = mock(SysRoleMapper.class);
+        SysRolePermissionMapper permissionMapper = mock(SysRolePermissionMapper.class);
+        AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
+        RedisUtil redisUtil = mock(RedisUtil.class);
+        AdminServiceImpl service = new AdminServiceImpl(userMapper, roleMapper, permissionMapper, auditLogMapper, redisUtil);
+        AtomicReference<SysRole> insertedRole = new AtomicReference<>();
+
+        when(roleMapper.selectMaxRoleNumberIncludingDeleted()).thenReturn(7);
+        when(roleMapper.insert(any(SysRole.class))).thenAnswer(invocation -> {
+            SysRole role = invocation.getArgument(0);
+            role.setId(202L);
+            insertedRole.set(role);
+            return 1;
+        });
+        when(roleMapper.selectOne(any(Wrapper.class))).thenAnswer(invocation -> insertedRole.get());
+        when(permissionMapper.selectList(any(Wrapper.class))).thenReturn(Collections.emptyList());
+
+        RoleCreateRequest request = new RoleCreateRequest();
+        request.setRoleName("审计测试角色");
+        request.setDataScope("OWN_PLANT");
+        request.setPermissions(List.of("fai:VIEW"));
+        request.setReason("验证创建时间");
+
+        service.createRole(request, "127.0.0.1");
+
+        assertNotNull(insertedRole.get().getCreatedAt());
+        assertNotNull(insertedRole.get().getUpdatedAt());
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.kangli.qms.controller;
 import com.kangli.qms.common.R;
 import com.kangli.qms.dto.LoginDTO;
 import com.kangli.qms.dto.RefreshDTO;
+import com.kangli.qms.dto.ChangePasswordDTO;
 import com.kangli.qms.service.AuthService;
 import com.kangli.qms.service.CaptchaService;
 import com.kangli.qms.vo.CaptchaVO;
@@ -86,6 +87,13 @@ public class AuthController {
         String refresh = StringUtils.hasText(refreshToken) ? refreshToken.trim() : null;
         authService.logout(token, refresh);
         return R.ok(null, "已退出登录");
+    }
+
+    @PostMapping("/change-password")
+    @ApiOperation(value = "修改当前用户密码", notes = "校验当前密码后更新密码，并使全部旧会话失效")
+    public R<Void> changePassword(@Valid @RequestBody ChangePasswordDTO dto) {
+        authService.changePassword(dto);
+        return R.ok(null, "密码已修改，请重新登录");
     }
 
     @GetMapping("/me")

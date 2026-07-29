@@ -2,6 +2,7 @@ package com.kangli.qms.service;
 
 import com.kangli.qms.dto.LoginDTO;
 import com.kangli.qms.dto.RefreshDTO;
+import com.kangli.qms.dto.ChangePasswordDTO;
 import com.kangli.qms.vo.LoginVO;
 import com.kangli.qms.vo.UserInfoVO;
 
@@ -34,6 +35,8 @@ public interface AuthService {
      * @param refreshToken 当前 Refresh Token（可选，传则从 Redis 删除使其立即失效）
      */
     void logout(String accessToken, String refreshToken);
+
+    void changePassword(ChangePasswordDTO dto);
 
     /**
      * 获取当前登录用户信息（从 ThreadLocal 取身份，查库补全）。
