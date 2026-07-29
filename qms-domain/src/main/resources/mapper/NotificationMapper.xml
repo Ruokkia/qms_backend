@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.kangli.qms.mapper.NotificationMapper">
+<mapper namespace="com.kangli.qms.domain.notification.mapper.NotificationMapper">
 
     <!-- 将指定用户的全部未读通知标记为已读 -->
     <update id="markAllRead">

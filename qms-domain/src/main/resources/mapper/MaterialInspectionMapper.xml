@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.kangli.qms.mapper.MaterialInspectionMapper">
+<mapper namespace="com.kangli.qms.domain.incoming.mapper.MaterialInspectionMapper">
 
     <!-- ===== M1: 看板基本统计 ===== -->
-    <select id="selectStatsBase" resultType="com.kangli.qms.vo.MaterialInspectionStatsVO">
+    <select id="selectStatsBase" resultType="com.kangli.qms.domain.incoming.vo.MaterialInspectionStatsVO">
         SELECT
             COUNT(*)                                                        AS totalBatches,
             COUNT(*) FILTER (WHERE inspection_result = '合格')             AS qualifiedBatches,
@@ -20,7 +20,7 @@
     </select>
 
     <!-- ===== M1: 高频不合格描述 TOP10 ===== -->
-    <select id="selectTopDefectDesc" resultType="com.kangli.qms.vo.DefectDescItemVO">
+    <select id="selectTopDefectDesc" resultType="com.kangli.qms.domain.production.vo.DefectDescItemVO">
         SELECT defect_desc AS defectDesc, COUNT(*) AS count
         FROM qms.material_inspection
         WHERE is_deleted = 0
@@ -33,7 +33,7 @@
     </select>
 
     <!-- ===== M1: 供应商合格率排名 ===== -->
-    <select id="selectSupplierRank" resultType="com.kangli.qms.vo.SupplierRankItemVO">
+    <select id="selectSupplierRank" resultType="com.kangli.qms.domain.incoming.vo.SupplierRankItemVO">
         SELECT
             supplier_name    AS supplierName,
             supplier_code    AS supplierCode,
@@ -50,7 +50,7 @@
     </select>
 
     <!-- ===== M1: 日统计趋势（最近30天） ===== -->
-    <select id="selectDailyTrend" resultType="com.kangli.qms.vo.DailyTrendItemVO">
+    <select id="selectDailyTrend" resultType="com.kangli.qms.domain.production.vo.DailyTrendItemVO">
         SELECT
             TO_CHAR(inspection_date, 'YYYY-MM-DD') AS date,
             COUNT(*)                                AS totalBatches,
@@ -66,7 +66,7 @@
     </select>
 
     <!-- ===== M1: 未关联异常单的不合格来料记录（对账用） ===== -->
-    <select id="selectUnlinkedUnqualified" resultType="com.kangli.qms.entity.MaterialInspection">
+    <select id="selectUnlinkedUnqualified" resultType="com.kangli.qms.domain.incoming.entity.MaterialInspection">
         SELECT
             m.*
         FROM qms.material_inspection m
@@ -97,7 +97,7 @@
     </select>
 
     <!-- ===== M1: 重点供应商 Top5（近30天来料批次量最大） ===== -->
-    <select id="selectKeySuppliers" resultType="com.kangli.qms.vo.SupplierRankItemVO">
+    <select id="selectKeySuppliers" resultType="com.kangli.qms.domain.incoming.vo.SupplierRankItemVO">
         SELECT
             supplier_code    AS supplierCode,
             supplier_name    AS supplierName,
@@ -116,7 +116,7 @@
     </select>
 
     <!-- ===== M1: 重点供应商近30天每日合格率矩阵 ===== -->
-    <select id="selectKeySupplierTrend" resultType="com.kangli.qms.vo.KeySupplierTrendRowVO">
+    <select id="selectKeySupplierTrend" resultType="com.kangli.qms.domain.incoming.vo.KeySupplierTrendRowVO">
         WITH top5 AS (
             SELECT supplier_code, supplier_name
             FROM qms.material_inspection

@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.kangli.qms.mapper.ExceptionOrderMapper">
+<mapper namespace="com.kangli.qms.domain.exception.mapper.ExceptionOrderMapper">
 
     <!-- ===== M2: KPI 看板统计 ===== -->
-    <select id="selectStats" resultType="com.kangli.qms.vo.ExceptionStatsVO">
+    <select id="selectStats" resultType="com.kangli.qms.domain.exception.vo.ExceptionStatsVO">
         SELECT
             COUNT(*)                                                        AS totalExceptions,
             COUNT(*) FILTER (WHERE status = '待整改')                       AS pendingCount,
@@ -23,7 +23,7 @@
     </select>
 
     <!-- ===== M2: 按严重等级分组 ===== -->
-    <select id="selectSeverityBreakdown" resultType="com.kangli.qms.vo.BreakdownItemVO">
+    <select id="selectSeverityBreakdown" resultType="com.kangli.qms.domain.production.vo.BreakdownItemVO">
         SELECT severity AS name, COUNT(*) AS count
         FROM qms.exception_order
         WHERE is_deleted = 0 AND plant_code = #{plantCode}
@@ -32,7 +32,7 @@
     </select>
 
     <!-- ===== M2: 按来源类型分组 ===== -->
-    <select id="selectSourceBreakdown" resultType="com.kangli.qms.vo.BreakdownItemVO">
+    <select id="selectSourceBreakdown" resultType="com.kangli.qms.domain.production.vo.BreakdownItemVO">
         SELECT source_type AS name, COUNT(*) AS count
         FROM qms.exception_order
         WHERE is_deleted = 0 AND plant_code = #{plantCode}
@@ -41,7 +41,7 @@
     </select>
 
     <!-- ===== M2: 多维度分析（动态 dimension） ===== -->
-    <select id="selectAnalysis" resultType="com.kangli.qms.vo.ExceptionAnalysisItemVO">
+    <select id="selectAnalysis" resultType="com.kangli.qms.domain.exception.vo.ExceptionAnalysisItemVO">
         <choose>
             <when test="dimension == 'defectDesc'">
                 SELECT defect_desc AS name, COUNT(*) AS count
@@ -83,7 +83,7 @@
     </select>
 
     <!-- ===== M2: 重复问题检查（质量判断只读取 material_inspection） ===== -->
-    <select id="selectRepeatExceptions" resultType="com.kangli.qms.vo.TriggeredSupplierVO">
+    <select id="selectRepeatExceptions" resultType="com.kangli.qms.domain.exception.vo.TriggeredSupplierVO">
         SELECT
             MAX(s.id)                AS supplierId,
             MAX(m.supplier_name)     AS supplierName,
@@ -114,7 +114,7 @@
     </select>
 
     <!-- ===== M2: 供应商来料不良频次汇总 ===== -->
-    <select id="selectSupplierSummary" resultType="com.kangli.qms.vo.SupplierExceptionSummaryVO">
+    <select id="selectSupplierSummary" resultType="com.kangli.qms.domain.supplier.vo.SupplierExceptionSummaryVO">
         SELECT
             s.id                    AS supplierId,
             s.supplier_name         AS supplierName,

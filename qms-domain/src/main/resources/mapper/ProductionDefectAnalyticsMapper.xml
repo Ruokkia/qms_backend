@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.kangli.qms.mapper.ProductionDefectAnalyticsMapper">
+<mapper namespace="com.kangli.qms.domain.production.mapper.ProductionDefectAnalyticsMapper">
 
     <sql id="metricExpr">
         <choose>
@@ -32,7 +32,7 @@
         </if>
     </sql>
 
-    <select id="selectSeries" resultType="com.kangli.qms.vo.DefectTrendPointVO">
+    <select id="selectSeries" resultType="com.kangli.qms.domain.production.vo.DefectTrendPointVO">
         SELECT
             TO_CHAR(date_trunc(<include refid="granularityLiteral"/>, send_repair_date), 'YYYY-MM-DD') AS period,
             <include refid="metricExpr"/> AS metricValue,
@@ -48,7 +48,7 @@
         ORDER BY period
     </select>
 
-    <select id="selectRank" resultType="com.kangli.qms.vo.DefectRankItemVO">
+    <select id="selectRank" resultType="com.kangli.qms.domain.production.vo.DefectRankItemVO">
         SELECT
             <include refid="dimColumn"/> AS name,
             <include refid="metricExpr"/> AS metricValue,

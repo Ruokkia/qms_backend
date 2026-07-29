@@ -35,6 +35,7 @@ public enum ResultCode {
     EIGHT_D_STEP_INVALID(2006, "8D步骤无法回退"),
     EIGHT_D_ALREADY_CLOSED(2007, "8D已闭环"),
     VERSION_CONFLICT(2008, "数据已被他人修改，请刷新后重试"),
+    EIGHT_D_STEP_JUMP(2009, "8D步骤不允许跳步"),
     ;
 
     private final int code;

@@ -1,0 +1,10 @@
+package com.kangli.qms.domain.spc.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.kangli.qms.domain.spc.entity.SpcProcess;
+
+/**
+ * M4 SPC 工序定义 Mapper。
+ */
+public interface SpcProcessMapper extends BaseMapper<SpcProcess> {
+}

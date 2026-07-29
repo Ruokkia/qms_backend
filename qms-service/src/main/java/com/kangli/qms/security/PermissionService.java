@@ -1,8 +1,8 @@
 package com.kangli.qms.security;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.kangli.qms.entity.SysRolePermission;
-import com.kangli.qms.mapper.SysRolePermissionMapper;
+import com.kangli.qms.domain.admin.entity.SysRolePermission;
+import com.kangli.qms.domain.admin.mapper.SysRolePermissionMapper;
 import org.springframework.stereotype.Service;
 
 @Service

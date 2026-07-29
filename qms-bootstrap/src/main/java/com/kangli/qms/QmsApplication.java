@@ -8,7 +8,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 康力质量管理系统（QMS）后端启动类。
  */
 @SpringBootApplication
-@MapperScan("com.kangli.qms.mapper")
+@MapperScan("com.kangli.qms.domain")
 public class QmsApplication {
 
     public static void main(String[] args) {
