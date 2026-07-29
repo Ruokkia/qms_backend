@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kangli.qms.common.*;
 import com.kangli.qms.service.exception.dto.EscalationCheckDTO;
+import com.kangli.qms.service.exception.dto.EscalationCreateDTO;
 import com.kangli.qms.service.exception.dto.EscalationReviewDTO;
 import com.kangli.qms.service.exception.dto.EscalationPlanDTO;
 import com.kangli.qms.service.exception.dto.EscalationExecutionDTO;
@@ -69,18 +70,8 @@ public class EscalationController {
 
     @PostMapping
     @ApiOperation(value = "发起升级")
-    public R<Escalation> create(@RequestBody Escalation escalation) {
-        LoginUser loginUser = getCurrentLoginUser();
-        escalation.setPlantCode(loginUser.getPlantCode().name());
-        escalation.setPlantName(loginUser.getPlantCode().getChineseName());
-        escalation.setCreatedBy(loginUser.getRealName());
-        escalation.setUpdatedBy(loginUser.getRealName());
-        if (escalation.getStatus() == null) {
-            escalation.setStatus("PENDING_REVIEW");
-        }
-        escalation.setProcessStage("PENDING_REVIEW");
-        escalationService.save(escalation);
-        return R.ok(escalation, "升级已发起");
+    public R<Escalation> create(@Valid @RequestBody EscalationCreateDTO dto) {
+        return R.ok(escalationService.create(dto), "升级已发起");
     }
 
     @PostMapping("/check")

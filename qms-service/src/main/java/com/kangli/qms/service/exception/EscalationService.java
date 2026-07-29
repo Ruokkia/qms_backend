@@ -2,6 +2,7 @@ package com.kangli.qms.service.exception;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kangli.qms.service.exception.dto.EscalationCheckDTO;
+import com.kangli.qms.service.exception.dto.EscalationCreateDTO;
 import com.kangli.qms.service.exception.dto.EscalationReviewDTO;
 import com.kangli.qms.service.exception.dto.EscalationPlanDTO;
 import com.kangli.qms.service.exception.dto.EscalationExecutionDTO;
@@ -11,6 +12,9 @@ import com.kangli.qms.domain.exception.entity.Escalation;
 import com.kangli.qms.domain.exception.vo.EscalationCheckResultVO;
 
 public interface EscalationService extends IService<Escalation> {
+
+    /** 发起升级：服务端校验供应商主数据及分公司归属，统一设置初始状态。 */
+    Escalation create(EscalationCreateDTO dto);
 
     /** 批量升级检查（90天内同类不良≥N次） */
     EscalationCheckResultVO checkEscalation(EscalationCheckDTO dto);

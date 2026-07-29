@@ -7,6 +7,7 @@ import com.kangli.qms.common.LoginUser;
 import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.common.ResultCode;
 import com.kangli.qms.service.exception.dto.EscalationCheckDTO;
+import com.kangli.qms.service.exception.dto.EscalationCreateDTO;
 import com.kangli.qms.service.exception.dto.EscalationReviewDTO;
 import com.kangli.qms.service.exception.dto.EscalationPlanDTO;
 import com.kangli.qms.service.exception.dto.EscalationExecutionDTO;
@@ -44,6 +45,40 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
     public EscalationServiceImpl(ExceptionOrderMapper exceptionOrderMapper, SupplierMapper supplierMapper) {
         this.exceptionOrderMapper = exceptionOrderMapper;
         this.supplierMapper = supplierMapper;
+    }
+
+    @Override
+    @Transactional
+    public Escalation create(EscalationCreateDTO dto) {
+        LoginUser loginUser = getCurrentLoginUser();
+        Supplier supplier = supplierMapper.selectById(dto.getSupplierId());
+        if (supplier == null || (supplier.getIsDeleted() != null && supplier.getIsDeleted() == 1)) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "供应商不存在或已删除");
+        }
+        if (!loginUser.getPlantCode().name().equals(supplier.getPlantCode())) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "不能向其他分公司的供应商发起升级");
+        }
+        if (!"启用".equals(supplier.getStatus())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "已停用的供应商不能发起升级");
+        }
+
+        Escalation escalation = new Escalation();
+        escalation.setSupplierId(String.valueOf(supplier.getId()));
+        escalation.setSupplierCode(supplier.getSupplierCode());
+        escalation.setSupplierName(supplier.getSupplierName());
+        escalation.setMaterialCode(dto.getMaterialCode());
+        escalation.setEscalationReason(dto.getEscalationReason().trim());
+        escalation.setEscalationAction(dto.getEscalationAction().trim());
+        escalation.setRelatedExceptionIds(dto.getRelatedExceptionIds());
+        escalation.setRemark(dto.getRemark());
+        escalation.setStatus("PENDING_REVIEW");
+        escalation.setProcessStage("PENDING_REVIEW");
+        escalation.setPlantCode(loginUser.getPlantCode().name());
+        escalation.setPlantName(loginUser.getPlantCode().getChineseName());
+        escalation.setCreatedBy(loginUser.getRealName());
+        escalation.setUpdatedBy(loginUser.getRealName());
+        save(escalation);
+        return escalation;
     }
 
     @Override
@@ -128,6 +163,7 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
         EscalationWorkflowPolicy.requireStage(escalation.getProcessStage(), EscalationWorkflowPolicy.PLAN, "制定升级措施");
         escalation.setActionPlan(dto.getActionPlan());
         escalation.setOwnerName(dto.getOwnerName());
+        escalation.setPlanFilledBy(getCurrentLoginUser().getRealName());
         escalation.setDueDate(dto.getDueDate());
         escalation.setProcessStage(EscalationWorkflowPolicy.EXECUTION);
         touch(escalation);
