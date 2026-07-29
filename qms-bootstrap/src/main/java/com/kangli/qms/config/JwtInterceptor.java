@@ -128,6 +128,7 @@ public class JwtInterceptor implements HandlerInterceptor {
         LoginUser loginUser = LoginUser.builder()
                 .userId(userId)
                 .account(account)
+                .realName(currentUser != null ? currentUser.getRealName() : null)
                 .roleCode(roleCode)
                 .plantCode(plantCode)
                 .canSwitchArea(hasAllPlantScope)
