@@ -18,6 +18,14 @@ class PermissionResolverTest {
     }
 
     @Test
+    void allowsRoleDeletionForAnyoneWhoCanAccessSystemAdminMenu() {
+        PermissionRequirement requirement = resolver.resolve("/api/v1/admin/roles/R08", "DELETE");
+
+        assertEquals("systemAdmin", requirement.getModuleCode());
+        assertEquals(PermissionAction.VIEW, requirement.getAction());
+    }
+
+    @Test
     void resolvesIncomingTraceV2ReadRequestsAsTraceViewPermissions() {
         PermissionRequirement requirement = resolver.resolve("/api/v2/incoming-trace/nodes", "GET");
 

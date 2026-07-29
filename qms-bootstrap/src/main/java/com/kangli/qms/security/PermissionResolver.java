@@ -34,6 +34,9 @@ public class PermissionResolver {
         String resource = requestUri.substring(prefix.length());
         String firstSegment = resource.contains("/") ? resource.substring(0, resource.indexOf('/')) : resource;
         if ("admin".equals(firstSegment)) {
+            if (isRoleDeletion(requestUri, method)) {
+                return new PermissionRequirement("systemAdmin", PermissionAction.VIEW);
+            }
             return new PermissionRequirement("systemAdmin", actionFor(method));
         }
         String moduleCode = MODULES.get(firstSegment);
@@ -47,6 +50,11 @@ public class PermissionResolver {
             return new PermissionRequirement(moduleCode, PermissionAction.APPROVE);
         }
         return new PermissionRequirement(moduleCode, actionFor(method));
+    }
+
+    private boolean isRoleDeletion(String requestUri, String method) {
+        return "DELETE".equalsIgnoreCase(method)
+                && requestUri.matches("/api/v1/admin/roles/[^/]+");
     }
 
     /** 关单和供应商升级审核会改变质量结论，不能与日常整改录入共用 EDIT 权限。 */

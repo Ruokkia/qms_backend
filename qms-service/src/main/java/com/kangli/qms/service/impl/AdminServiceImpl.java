@@ -8,6 +8,7 @@ import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.common.ResultCode;
 import com.kangli.qms.dto.AdminActionRequest;
 import com.kangli.qms.dto.AdminUserRequest;
+import com.kangli.qms.dto.RoleCreateRequest;
 import com.kangli.qms.dto.RolePermissionRequest;
 import com.kangli.qms.entity.AuditLog;
 import com.kangli.qms.entity.SysRole;
@@ -74,6 +75,7 @@ public class AdminServiceImpl implements AdminService {
 
     @Override @Transactional public void setUserStatus(Long id, boolean enabled, AdminActionRequest request, String ip) {
         SysUser user = requireUser(id); if (!enabled) protectLastSuperAdmin(user); protectSelfDisable(user);
+        if (enabled) requireRole(user.getRoleCode());
         user.setStatus(enabled ? (short) 1 : (short) 0); invalidate(user); userMapper.updateById(user); audit(enabled ? "ENABLE_USER" : "DISABLE_USER", id, request.getReason(), ip, user.getAccount());
     }
 
@@ -88,6 +90,48 @@ public class AdminServiceImpl implements AdminService {
     }
 
     @Override public List<RolePermissionVO> listRoles() { return roleMapper.selectList(new LambdaQueryWrapper<SysRole>().orderByAsc(SysRole::getRoleCode)).stream().map(role -> getRolePermissions(role.getRoleCode())).collect(Collectors.toList()); }
+
+    @Override @Transactional public RolePermissionVO createRole(RoleCreateRequest request, String ip) {
+        validateDataScope(request.getDataScope());
+        if (request.getPermissions() == null || request.getPermissions().isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "请至少选择一个模块权限");
+        }
+        roleMapper.lockRoleCodeGeneration();
+        int nextRoleNumber = roleMapper.selectMaxRoleNumberIncludingDeleted() + 1;
+        String roleCode = String.format("R%02d", nextRoleNumber);
+        List<String> permissions = normalizeSystemAdminPermissions(roleCode, request.getPermissions());
+
+        SysRole role = new SysRole();
+        role.setRoleCode(roleCode);
+        role.setRoleName(request.getRoleName().trim());
+        role.setDescription(request.getDescription() == null ? null : request.getDescription().trim());
+        role.setStatus((short) 1);
+        role.setPlantCode("*");
+        role.setPlantName("全局");
+        role.setDataScope(request.getDataScope());
+        role.setVersion(1);
+        roleMapper.insert(role);
+        replacePermissions(roleCode, permissions);
+        audit("CREATE_ROLE", role.getId(), request.getReason(), ip, roleCode + "/" + role.getRoleName());
+        return getRolePermissions(roleCode);
+    }
+
+    @Override @Transactional public void deleteRole(String roleCode, AdminActionRequest request, String ip) {
+        if (isBuiltInRole(roleCode)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "超级管理员角色不能删除");
+        }
+        SysRole role = requireRole(roleCode);
+        long enabledUsers = userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
+                .eq(SysUser::getRoleCode, roleCode)
+                .eq(SysUser::getStatus, 1));
+        if (enabledUsers > 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "该角色仍绑定使用中的账号，请先停用账号");
+        }
+        permissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>()
+                .eq(SysRolePermission::getRoleCode, roleCode));
+        roleMapper.deleteById(role.getId());
+        audit("DELETE_ROLE", role.getId(), request.getReason(), ip, roleCode + "/" + role.getRoleName());
+    }
 
     @Override public RolePermissionVO getRolePermissions(String roleCode) {
         SysRole role = requireRole(roleCode); RolePermissionVO vo = new RolePermissionVO(); vo.setRoleCode(role.getRoleCode()); vo.setRoleName(role.getRoleName()); vo.setDataScope(role.getDataScope()); vo.setVersion(role.getVersion());
@@ -129,6 +173,28 @@ public class AdminServiceImpl implements AdminService {
     }
 
     private void invalidateAndSave(SysUser user) { invalidate(user); userMapper.updateById(user); }
+    private void validateDataScope(String dataScope) {
+        if (!"OWN_PLANT".equals(dataScope) && !"ALL_PLANTS".equals(dataScope)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "数据范围无效");
+        }
+    }
+    private boolean isBuiltInRole(String roleCode) {
+        return "R00".equals(roleCode);
+    }
+    private void replacePermissions(String roleCode, List<String> permissions) {
+        permissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>().eq(SysRolePermission::getRoleCode, roleCode));
+        for (String permission : permissions) {
+            String[] parts = permission.split(":", 2);
+            if (parts.length != 2) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "权限格式必须为 模块:操作");
+            }
+            SysRolePermission item = new SysRolePermission();
+            item.setRoleCode(roleCode);
+            item.setModuleCode(parts[0]);
+            item.setActionCode(parts[1]);
+            permissionMapper.insert(item);
+        }
+    }
     private List<String> normalizeSystemAdminPermissions(String roleCode, List<String> requestedPermissions) {
         List<String> permissions = new ArrayList<>(requestedPermissions == null ? List.of() : requestedPermissions);
         boolean hasSystemAdminPermission = permissions.stream().anyMatch(permission -> permission.startsWith("systemAdmin:"));
