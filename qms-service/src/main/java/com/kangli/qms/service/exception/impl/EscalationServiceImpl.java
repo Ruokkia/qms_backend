@@ -57,6 +57,11 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
         List<TriggeredSupplierVO> triggered = exceptionOrderMapper.selectRepeatExceptions(
                 plantCode, daysWindow, minRepeatCount);
 
+        // 升级任务必须能够落到供应商主数据；未映射的脏来料不能作为升级候选。
+        triggered = triggered.stream()
+                .filter(candidate -> candidate.getSupplierId() != null)
+                .collect(Collectors.toList());
+
         // 解析逗号分隔的异常单 ID
         for (TriggeredSupplierVO t : triggered) {
             t.setWindowDays(daysWindow);

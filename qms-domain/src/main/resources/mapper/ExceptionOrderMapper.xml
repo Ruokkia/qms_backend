@@ -94,7 +94,7 @@
             string_agg(DISTINCT e.id::text, ',')
                 FILTER (WHERE e.id IS NOT NULL) AS relatedExceptionIdsStr
         FROM qms.material_inspection m
-        LEFT JOIN qms.supplier s
+        INNER JOIN qms.supplier s
           ON s.supplier_code = m.supplier_code
          AND s.plant_code = m.plant_code
          AND s.is_deleted = 0
@@ -107,7 +107,8 @@
           AND m.inspection_result = '不合格'
           AND m.supplier_code IS NOT NULL
           AND m.material_code IS NOT NULL
-          AND m.inspection_date &gt;= CURRENT_DATE - #{daysWindow}
+          AND m.inspection_date &gt;= CURRENT_DATE - (#{daysWindow} - 1)
+          AND m.inspection_date &lt;= CURRENT_DATE
         GROUP BY m.supplier_code, m.material_code
         HAVING COUNT(DISTINCT m.id) &gt;= #{minRepeatCount}
         ORDER BY repeatCount DESC

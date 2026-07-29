@@ -9,6 +9,7 @@ import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.common.PageResult;
 import com.kangli.qms.common.ResultCode;
 import com.kangli.qms.service.exception.dto.ExceptionCloseDTO;
+import com.kangli.qms.service.exception.dto.ExceptionUpdateDTO;
 import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
 import com.kangli.qms.domain.admin.entity.AuditLog;
 import com.kangli.qms.domain.exception.entity.Exception8d;
@@ -274,6 +275,11 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setUpdatedBy(loginUser.getRealName());
 
         exceptionOrderMapper.insert(order);
+
+        // 若建单时直接携带 8D 流程且已进入「进行中」，同步自动建 D1 报告
+        if (processIncludes8D(order.getProcessType()) && "进行中".equals(order.getCapaStatus())) {
+            ensureEightDInitialized(order, loginUser);
+        }
         return order;
     }
 
@@ -282,7 +288,9 @@ public class ExceptionServiceImpl implements ExceptionService {
     @Override
     @Transactional
     public ExceptionOrder createFromMaterialInspection(MaterialInspection inspection, LoginUser loginUser) {
-        String plantCode = loginUser.getPlantCode().name();
+        // 异常单归属以来料记录自身厂为准，避免当前用户厂与来料真实厂错位（如 SZ 用户建 MZ 来料单）
+        String plantCode = StringUtils.hasText(inspection.getPlantCode())
+                ? inspection.getPlantCode() : loginUser.getPlantCode().name();
 
         Long existingId = findExceptionBySourceId(inspection.getId());
         if (existingId != null) {
@@ -319,7 +327,8 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setHandlerId(loginUser.getUserId());
         order.setExceptionNo(generateExceptionNo(plantCode));
         order.setPlantCode(plantCode);
-        order.setPlantName(loginUser.getPlantCode().getChineseName());
+        order.setPlantName(StringUtils.hasText(inspection.getPlantName())
+                ? inspection.getPlantName() : loginUser.getPlantCode().getChineseName());
         order.setCreatedBy(loginUser.getRealName());
         order.setUpdatedBy(loginUser.getRealName());
 
@@ -353,24 +362,55 @@ public class ExceptionServiceImpl implements ExceptionService {
     // ===== 更新 =====
 
     @Override
-    public void update(Long id, ExceptionOrder order) {
+    public void update(Long id, ExceptionUpdateDTO dto) {
         ExceptionOrder existing = exceptionOrderMapper.selectById(id);
         if (existing == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在：" + id);
         }
-        order.setId(id);
         LoginUser loginUser = getCurrentLoginUser();
-        order.setUpdatedBy(loginUser.getRealName());
-        // 不允许通过 update 修改闭环状态
-        order.setStatus(null);
-        order.setClosedAt(null);
-        exceptionOrderMapper.updateById(order);
+        // 分公司越权校验：禁止操作其它分公司的异常单
+        if (!existing.getPlantCode().equals(loginUser.getPlantCode().name())) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "无权操作其他分公司的异常单");
+        }
+        ExceptionOrder update = new ExceptionOrder();
+        update.setId(id);
+        // 乐观锁：回填版本号，触发 MyBatis-Plus @Version 并发保护（原代码漏设 version，并发更新无保护）
+        update.setVersion(existing.getVersion());
+        // 仅拷贝白名单内的可编辑字段，且非 null 才覆盖，避免误清空未提供的字段；
+        // plantCode/exceptionNo/createdBy/status/closedAt 等系统字段绝不会被写入
+        applyEditableFields(dto, update);
+        update.setUpdatedBy(loginUser.getRealName());
+        exceptionOrderMapper.updateById(update);
+    }
+
+    /** 将白名单字段从 DTO 拷贝到待更新实体；仅拷贝非 null 值，未提供的字段保留原值 */
+    private void applyEditableFields(ExceptionUpdateDTO dto, ExceptionOrder target) {
+        if (dto.getSourceType() != null) target.setSourceType(dto.getSourceType());
+        if (dto.getSeverity() != null) target.setSeverity(dto.getSeverity());
+        if (dto.getSupplierId() != null) target.setSupplierId(dto.getSupplierId());
+        if (dto.getWorkOrderId() != null) target.setWorkOrderId(dto.getWorkOrderId());
+        if (dto.getMaterialCode() != null) target.setMaterialCode(dto.getMaterialCode());
+        if (dto.getDefectDesc() != null) target.setDefectDesc(dto.getDefectDesc());
+        if (dto.getDefectQty() != null) target.setDefectQty(dto.getDefectQty());
+        if (dto.getTotalQty() != null) target.setTotalQty(dto.getTotalQty());
+        if (dto.getHandlerId() != null) target.setHandlerId(dto.getHandlerId());
+        if (dto.getReviewerId() != null) target.setReviewerId(dto.getReviewerId());
+        if (dto.getCapaStatus() != null) target.setCapaStatus(dto.getCapaStatus());
+        if (dto.getProcessType() != null) target.setProcessType(dto.getProcessType());
+        if (dto.getDeadline() != null) target.setDeadline(dto.getDeadline());
+        if (dto.getRemark() != null) target.setRemark(dto.getRemark());
+        if (dto.getSignatureUser() != null) target.setSignatureUser(dto.getSignatureUser());
+        if (dto.getSignatureTime() != null) target.setSignatureTime(dto.getSignatureTime());
+        if (dto.getSignatureReason() != null) target.setSignatureReason(dto.getSignatureReason());
     }
 
     // ===== 逻辑删除 =====
 
     @Override
     public void delete(Long id) {
+        // 先按 id 加载并校验归属（拦截器自动注入 plant_code，他厂记录返回 null），避免越权静默删除
+        ExceptionOrder existing = exceptionOrderMapper.selectById(id);
+        if (existing == null) throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在");
         exceptionOrderMapper.deleteById(id);
     }
 
@@ -401,6 +441,10 @@ public class ExceptionServiceImpl implements ExceptionService {
         LoginUser loginUser = getCurrentLoginUser();
         update.setUpdatedBy(loginUser.getRealName());
         exceptionOrderMapper.updateById(update);
+
+        // 8D 流程：发起即自动建 D1 报告，避免后续 next-step 查不到记录 404
+        existing.setProcessType(processType);
+        ensureEightDInitialized(existing, loginUser);
 
         // 审计：记录发起整改流程操作
         auditLogService.record("exception_order", id, "UPDATE", existing, update, "发起整改流程：" + processType);
@@ -759,6 +803,9 @@ public class ExceptionServiceImpl implements ExceptionService {
 
     @Override
     public List<AuditLog> auditTrail(Long id) {
+        // 校验异常单归属本厂（拦截器已按 plant_code 过滤，他厂 id 返回 null），避免越权读取他厂审计日志
+        if (exceptionOrderMapper.selectById(id) == null)
+            throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在");
         List<AuditLog> result = new ArrayList<>();
 
         // 异常单自身
@@ -963,9 +1010,43 @@ public class ExceptionServiceImpl implements ExceptionService {
         exception8dMapper.insert(eightD);
     }
 
+    /**
+     * 幂等确保 8D 报告存在：仅当 processType 含 8D 时生效。
+     * ① 已存在则跳过；② 已软删除则恢复为 D1（避免 exception_id 唯一索引冲突）；
+     * ③ 不存在则新建 D1。供发起流程 / 建单等多入口安全复用。
+     */
+    private void ensureEightDInitialized(ExceptionOrder order, LoginUser loginUser) {
+        if (!processIncludes8D(order.getProcessType())) {
+            return;
+        }
+        Exception8d existing = exception8dMapper.selectByExceptionId(order.getId());
+        if (existing != null) {
+            return; // 已存在，跳过
+        }
+        Exception8d deleted = exception8dMapper.selectByExceptionIdIgnoreDeleted(order.getId());
+        if (deleted != null) {
+            // 已软删除则恢复为初始 D1 状态
+            exception8dMapper.restoreDeletedById(deleted.getId());
+            deleted.setCurrentStep("D1");
+            deleted.setD1Team(null);
+            deleted.setD2ProblemDesc(null);
+            deleted.setD3Containment(null);
+            deleted.setD4RootCause(null);
+            deleted.setD5Corrective(null);
+            deleted.setD6Implementation(null);
+            deleted.setD7Preventive(null);
+            deleted.setD8Closure(null);
+            deleted.setIsDeleted((short) 0);
+            deleted.setUpdatedBy(loginUser.getRealName());
+            exception8dMapper.updateById(deleted);
+            return;
+        }
+        initializeEightD(order, loginUser);
+    }
+
     private void createAutomaticEscalationIfNeeded(ExceptionOrder order, MaterialInspection inspection,
                                                     LoginUser loginUser, int repeatCount90Days) {
-        if (repeatCount90Days < 3 || !StringUtils.hasText(inspection.getSupplierCode())
+        if (repeatCount90Days < 3 || order.getSupplierId() == null || !StringUtils.hasText(inspection.getSupplierCode())
                 || !StringUtils.hasText(inspection.getMaterialCode())) {
             return;
         }
