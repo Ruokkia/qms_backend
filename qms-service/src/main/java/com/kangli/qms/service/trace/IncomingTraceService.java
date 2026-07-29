@@ -1,7 +1,10 @@
 package com.kangli.qms.service.trace;
 
+import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
+import com.kangli.qms.domain.incoming.entity.MaterialInspection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.util.*;
@@ -65,6 +68,9 @@ public class IncomingTraceService {
 
     public long createNode(Map<String, Object> body) {
         String type = text(body, "nodeType"); String barcode = text(body, "barcode"); String name = text(body, "name");
+        if ("FINISHED_GOOD".equals(type) || "MATERIAL".equals(type)) {
+            throw new IllegalArgumentException("成品和来料追溯节点由检验主数据自动同步，不能手工创建");
+        }
         if (!Arrays.asList("FINISHED_GOOD", "SEMI_FINISHED", "MATERIAL").contains(type) || barcode.isEmpty() || name.isEmpty()) throw new IllegalArgumentException("请填写类型、条码和名称");
         if ("MATERIAL".equals(type) && (text(body,"materialCode").isEmpty() || text(body,"materialBatchNo").isEmpty())) throw new IllegalArgumentException("物料必须填写物料代码和物料批号");
         jdbc.update("insert into qms.trace_node(node_type,barcode,name,product_code,material_code,material_batch_no,specification) values(?,?,?,?,?,?,?)", type, barcode, name, nullable(body,"productCode"), nullable(body,"materialCode"), nullable(body,"materialBatchNo"), nullable(body,"specification"));
@@ -135,10 +141,12 @@ public class IncomingTraceService {
         if (fgSn == null || fgSn.trim().isEmpty()) throw new IllegalArgumentException("成品记录缺少生产批号/产品编号");
 
         // 3. 确保成品节点存在（FINISHED_GOOD）
-        long fgNodeId = ensureNode("FINISHED_GOOD", fgSn.trim(), fgName != null ? fgName : fgSn, null, null, null, null);
+        long fgNodeId = ensureNode("FINISHED_GOOD", fgSn.trim(), fgName != null ? fgName : fgSn,
+                null, null, null, null, finishedGoodsInspectionId, null);
 
         // 4. 确保来料节点存在（MATERIAL）
-        long matNodeId = ensureNode("MATERIAL", matBatchNo.trim(), matName != null ? matName : matBatchNo, null, matCode, matBatchNo.trim(), null);
+        long matNodeId = ensureNode("MATERIAL", matBatchNo.trim(), matName != null ? matName : matBatchNo,
+                null, matCode, matBatchNo.trim(), null, null, materialInspectionId);
 
         // 5. 检查是否已绑定
         Integer existing = jdbc.query(
@@ -172,15 +180,48 @@ public class IncomingTraceService {
         return result;
     }
 
-    private long ensureNode(String type, String barcode, String name, String productCode, String materialCode, String materialBatchNo, String specification) {
+    public void syncFinishedGoodsNode(FinishedGoodsInspection record) {
+        if (record == null || record.getId() == null || !StringUtils.hasText(record.getProdBatchOrSn())) {
+            return;
+        }
+        ensureNode("FINISHED_GOOD", record.getProdBatchOrSn().trim(),
+                StringUtils.hasText(record.getProductName()) ? record.getProductName() : record.getProdBatchOrSn().trim(),
+                record.getMaterialCode(), null, null, record.getModelSpec(), record.getId(), null);
+    }
+
+    public void syncMaterialNode(MaterialInspection record) {
+        if (record == null || record.getId() == null || !StringUtils.hasText(record.getMaterialBatchNo())
+                || !StringUtils.hasText(record.getMaterialCode())) {
+            return;
+        }
+        ensureNode("MATERIAL", record.getMaterialBatchNo().trim(),
+                StringUtils.hasText(record.getMaterialName()) ? record.getMaterialName() : record.getMaterialBatchNo().trim(),
+                null, record.getMaterialCode(), record.getMaterialBatchNo().trim(), record.getSpecModel(), null, record.getId());
+    }
+
+    private long ensureNode(String type, String barcode, String name, String productCode, String materialCode,
+                            String materialBatchNo, String specification, Long finishedGoodsInspectionId,
+                            Long materialInspectionId) {
+        String masterColumn = finishedGoodsInspectionId != null ? "finished_goods_inspection_id" : "material_inspection_id";
+        Long masterId = finishedGoodsInspectionId != null ? finishedGoodsInspectionId : materialInspectionId;
         Long existing = jdbc.query(
-            "select id from qms.trace_node where barcode=?",
-            rs -> rs.next() ? rs.getLong("id") : null, barcode);
-        if (existing != null) return existing;
+            "select id from qms.trace_node where " + masterColumn + "=?",
+            rs -> rs.next() ? rs.getLong("id") : null, masterId);
+        if (existing == null) {
+            existing = jdbc.query("select id from qms.trace_node where barcode=?", rs -> rs.next() ? rs.getLong("id") : null, barcode);
+        }
+        if (existing != null) {
+            jdbc.update("update qms.trace_node set node_type=?, barcode=?, name=?, product_code=?, material_code=?, "
+                            + "material_batch_no=?, specification=?, finished_goods_inspection_id=?, material_inspection_id=? where id=?",
+                    type, barcode, name, productCode, materialCode, materialBatchNo, specification,
+                    finishedGoodsInspectionId, materialInspectionId, existing);
+            return existing;
+        }
         jdbc.update(
-            "insert into qms.trace_node(node_type,barcode,name,product_code,material_code,material_batch_no,specification) values(?,?,?,?,?,?,?)",
-            type, barcode, name, productCode, materialCode, materialBatchNo, specification);
-        return jdbc.queryForObject("select id from qms.trace_node where barcode=?", Long.class, barcode);
+            "insert into qms.trace_node(node_type,barcode,name,product_code,material_code,material_batch_no,specification,finished_goods_inspection_id,material_inspection_id) values(?,?,?,?,?,?,?,?,?)",
+            type, barcode, name, productCode, materialCode, materialBatchNo, specification,
+            finishedGoodsInspectionId, materialInspectionId);
+        return jdbc.queryForObject("select id from qms.trace_node where " + masterColumn + "=?", Long.class, masterId);
     }
 
     private Map<String, Object> mapMatRow(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -226,7 +267,7 @@ public class IncomingTraceService {
     private List<Map<String,Object>> linked(long id, boolean up) { String sql=up?"select n.* from qms.trace_relation r join qms.trace_node n on n.id=r.parent_node_id where r.child_node_id=? order by n.barcode":"select n.* from qms.trace_relation r join qms.trace_node n on n.id=r.child_node_id where r.parent_node_id=? order by n.barcode"; return jdbc.query(sql,(rs,i)->mapNode(rs),id); }
     private boolean reachable(long from,long target,Set<Long> seen){if(from==target)return true;if(!seen.add(from))return false;for(Map<String,Object> n:linked(from,false))if(reachable(((Number)n.get("id")).longValue(),target,seen))return true;return false;}
     private Map<String,Object> nodeByBarcode(String barcode){return jdbc.query("select * from qms.trace_node where barcode=?",rs->rs.next()?mapNode(rs):null,barcode);}
-    private Map<String,Object> mapNode(java.sql.ResultSet rs)throws java.sql.SQLException {Map<String,Object> n=new LinkedHashMap<>();n.put("id",rs.getLong("id"));n.put("nodeType",rs.getString("node_type"));n.put("barcode",rs.getString("barcode"));n.put("name",rs.getString("name"));n.put("productCode",rs.getString("product_code"));n.put("materialCode",rs.getString("material_code"));n.put("materialBatchNo",rs.getString("material_batch_no"));n.put("specification",rs.getString("specification"));return n;}
+    private Map<String,Object> mapNode(java.sql.ResultSet rs)throws java.sql.SQLException {Map<String,Object> n=new LinkedHashMap<>();n.put("id",rs.getLong("id"));n.put("nodeType",rs.getString("node_type"));n.put("barcode",rs.getString("barcode"));n.put("name",rs.getString("name"));n.put("productCode",rs.getString("product_code"));n.put("materialCode",rs.getString("material_code"));n.put("materialBatchNo",rs.getString("material_batch_no"));n.put("specification",rs.getString("specification"));n.put("finishedGoodsInspectionId",rs.getObject("finished_goods_inspection_id"));n.put("materialInspectionId",rs.getObject("material_inspection_id"));return n;}
     private Map<String,Object> result(Map<String,Object> root,int count,String direction,int lots){Map<String,Object> r=new LinkedHashMap<>();r.put("root",root);r.put("direction",direction);r.put("summary",summary());r.put("visitedNodes",count);r.put("batchLots",lots);return r;}
     private String text(Map<String,Object>b,String k){Object v=b.get(k);return v==null?"":v.toString().trim();} private Object nullable(Map<String,Object>b,String k){String v=text(b,k);return v.isEmpty()?null:v;} private long number(Map<String,Object>b,String k){try{return Long.parseLong(text(b,k));}catch(Exception e){throw new IllegalArgumentException("缺少有效的 "+k);}} private BigDecimal decimal(Map<String,Object>b,String k){String v=text(b,k);return v.isEmpty()?null:new BigDecimal(v);}
 }

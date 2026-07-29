@@ -14,6 +14,7 @@ import com.kangli.qms.domain.incoming.entity.MaterialInspection;
 import com.kangli.qms.domain.incoming.mapper.MaterialInspectionMapper;
 import com.kangli.qms.service.exception.ExceptionService;
 import com.kangli.qms.service.incoming.MaterialInspectionService;
+import com.kangli.qms.service.trace.IncomingTraceService;
 import com.kangli.qms.domain.incoming.vo.KeySupplierTrendVO;
 import com.kangli.qms.domain.incoming.vo.KeySupplierTrendRowVO;
 import com.kangli.qms.domain.incoming.vo.MaterialInspectionStatsVO;
@@ -42,11 +43,14 @@ public class MaterialInspectionServiceImpl
         implements MaterialInspectionService {
 
     private final ExceptionService exceptionService;
+    private final IncomingTraceService incomingTraceService;
     private final TransactionTemplate requiresNewTemplate;
 
     public MaterialInspectionServiceImpl(ExceptionService exceptionService,
+                                         IncomingTraceService incomingTraceService,
                                          PlatformTransactionManager transactionManager) {
         this.exceptionService = exceptionService;
+        this.incomingTraceService = incomingTraceService;
         this.requiresNewTemplate = new TransactionTemplate(transactionManager);
         this.requiresNewTemplate.setPropagationBehavior(Propagation.REQUIRES_NEW.value());
     }
@@ -138,6 +142,7 @@ public class MaterialInspectionServiceImpl
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
         baseMapper.insert(record);
+        incomingTraceService.syncMaterialNode(record);
 
         Long exId = null;
         if ("不合格".equals(record.getInspectionResult()) && autoCreateException) {
@@ -152,6 +157,10 @@ public class MaterialInspectionServiceImpl
     public MaterialInspectionReconcileResultVO reconcile(String startDate, String endDate, String plantCode) {
         LoginUser loginUser = getCurrentLoginUser();
         String effectivePlantCode = plantCode != null ? plantCode : loginUser.getPlantCode().name();
+        // 跨厂数据权限：非 ALL_PLANTS/R06（canSwitchArea）用户禁止查询其他分公司
+        if (plantCode != null && !plantCode.equals(loginUser.getPlantCode().name()) && !loginUser.isCanSwitchArea()) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "无权查询其他分公司数据");
+        }
 
         List<MaterialInspection> unqualifiedList = findUnlinkedUnqualified(startDate, endDate, effectivePlantCode);
         List<Long> createdExceptionIds = new ArrayList<>();
@@ -179,11 +188,32 @@ public class MaterialInspectionServiceImpl
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
         baseMapper.insert(record);
+        incomingTraceService.syncMaterialNode(record);
 
         if ("不合格".equals(record.getInspectionResult()) && autoCreateException) {
             exceptionService.createFromMaterialInspection(record, loginUser);
         }
         return record;
+    }
+
+    @Override
+    @Transactional
+    public boolean save(MaterialInspection entity) {
+        boolean saved = super.save(entity);
+        if (saved) {
+            incomingTraceService.syncMaterialNode(entity);
+        }
+        return saved;
+    }
+
+    @Override
+    @Transactional
+    public boolean updateById(MaterialInspection entity) {
+        boolean updated = super.updateById(entity);
+        if (updated) {
+            incomingTraceService.syncMaterialNode(getById(entity.getId()));
+        }
+        return updated;
     }
 
     @Override
