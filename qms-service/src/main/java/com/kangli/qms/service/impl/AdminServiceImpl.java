@@ -99,6 +99,9 @@ public class AdminServiceImpl implements AdminService {
     }
 
     @Override @Transactional public RolePermissionVO updateRolePermissions(String roleCode, RolePermissionRequest request, String ip) {
+        if ("R00".equals(roleCode)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "超级管理员权限已锁定，不能修改");
+        }
         if (!"OWN_PLANT".equals(request.getDataScope()) && !"ALL_PLANTS".equals(request.getDataScope())) throw new BusinessException(ResultCode.BAD_REQUEST, "数据范围无效");
         SysRole role = requireRole(roleCode);
         if (!request.getVersion().equals(role.getVersion())) {

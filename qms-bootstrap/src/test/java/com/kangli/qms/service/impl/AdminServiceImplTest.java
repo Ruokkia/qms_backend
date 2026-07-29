@@ -81,4 +81,26 @@ class AdminServiceImplTest {
                 () -> service.updateRolePermissions("R01", request, "127.0.0.1"));
         verify(roleMapper, never()).updateById(any(SysRole.class));
     }
+
+    @Test
+    void updateRolePermissions_shouldRejectSuperAdminRole() {
+        SysUserMapper userMapper = mock(SysUserMapper.class);
+        SysRoleMapper roleMapper = mock(SysRoleMapper.class);
+        SysRolePermissionMapper permissionMapper = mock(SysRolePermissionMapper.class);
+        AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
+        RedisUtil redisUtil = mock(RedisUtil.class);
+        AdminServiceImpl service = new AdminServiceImpl(userMapper, roleMapper, permissionMapper, auditLogMapper, redisUtil);
+
+        RolePermissionRequest request = new RolePermissionRequest();
+        request.setDataScope("OWN_PLANT");
+        request.setPermissions(Collections.emptyList());
+        request.setReason("测试锁定超级管理员权限");
+        request.setVersion(1);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.updateRolePermissions("R00", request, "127.0.0.1"));
+        assertEquals("超级管理员权限已锁定，不能修改", exception.getMessage());
+        verify(roleMapper, never()).selectOne(any(Wrapper.class));
+        verify(roleMapper, never()).updateById(any(SysRole.class));
+    }
 }
