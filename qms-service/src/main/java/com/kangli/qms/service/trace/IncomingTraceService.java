@@ -157,11 +157,11 @@ public class IncomingTraceService {
 
         // 3. 确保成品/半成品节点存在（类型由主数据分类决定）
         long fgNodeId = ensureNode(fgNodeType, fgSn.trim(), fgName != null ? fgName : fgSn,
-                null, null, null, null, finishedGoodsInspectionId, null);
+                null, null, null, null, finishedGoodsInspectionId, null, plant());
 
         // 4. 确保来料节点存在（MATERIAL）
         long matNodeId = ensureNode("MATERIAL", matBatchNo.trim(), matName != null ? matName : matBatchNo,
-                null, matCode, matBatchNo.trim(), null, null, materialInspectionId);
+                null, matCode, matBatchNo.trim(), null, null, materialInspectionId, plant());
 
         // 5. 检查是否已绑定（同一厂内）
         Integer existing = jdbc.query(
@@ -199,9 +199,10 @@ public class IncomingTraceService {
         if (record == null || record.getId() == null || !StringUtils.hasText(record.getProdBatchOrSn())) {
             return;
         }
+        String plant = StringUtils.hasText(record.getPlantCode()) ? record.getPlantCode() : plant();
         ensureNode(FinishedGoodsTraceNodeTypeResolver.resolve(record.getCategory()), record.getProdBatchOrSn().trim(),
                 StringUtils.hasText(record.getProductName()) ? record.getProductName() : record.getProdBatchOrSn().trim(),
-                record.getMaterialCode(), null, null, record.getModelSpec(), record.getId(), null);
+                record.getMaterialCode(), null, null, record.getModelSpec(), record.getId(), null, plant);
     }
 
     public void syncMaterialNode(MaterialInspection record) {
@@ -209,35 +210,36 @@ public class IncomingTraceService {
                 || !StringUtils.hasText(record.getMaterialCode())) {
             return;
         }
+        String plant = StringUtils.hasText(record.getPlantCode()) ? record.getPlantCode() : plant();
         ensureNode("MATERIAL", record.getMaterialBatchNo().trim(),
                 StringUtils.hasText(record.getMaterialName()) ? record.getMaterialName() : record.getMaterialBatchNo().trim(),
-                null, record.getMaterialCode(), record.getMaterialBatchNo().trim(), record.getSpecModel(), null, record.getId());
+                null, record.getMaterialCode(), record.getMaterialBatchNo().trim(), record.getSpecModel(), null, record.getId(), plant);
     }
 
     private long ensureNode(String type, String barcode, String name, String productCode, String materialCode,
                             String materialBatchNo, String specification, Long finishedGoodsInspectionId,
-                            Long materialInspectionId) {
+                            Long materialInspectionId, String plant) {
         String masterColumn = finishedGoodsInspectionId != null ? "finished_goods_inspection_id" : "material_inspection_id";
         Long masterId = finishedGoodsInspectionId != null ? finishedGoodsInspectionId : materialInspectionId;
         Long existing = jdbc.query(
             "select id from qms.trace_node where " + masterColumn + "=? and plant_code=?",
-            rs -> rs.next() ? rs.getLong("id") : null, masterId, plant());
+            rs -> rs.next() ? rs.getLong("id") : null, masterId, plant);
         if (existing == null) {
             existing = jdbc.query("select id from qms.trace_node where barcode=? and plant_code=?",
-                    rs -> rs.next() ? rs.getLong("id") : null, barcode, plant());
+                    rs -> rs.next() ? rs.getLong("id") : null, barcode, plant);
         }
         if (existing != null) {
             jdbc.update("update qms.trace_node set node_type=?, barcode=?, name=?, product_code=?, material_code=?, "
                             + "material_batch_no=?, specification=?, finished_goods_inspection_id=?, material_inspection_id=? where id=? and plant_code=?",
                     type, barcode, name, productCode, materialCode, materialBatchNo, specification,
-                    finishedGoodsInspectionId, materialInspectionId, existing, plant());
+                    finishedGoodsInspectionId, materialInspectionId, existing, plant);
             return existing;
         }
         jdbc.update(
             "insert into qms.trace_node(node_type,barcode,name,product_code,material_code,material_batch_no,specification,finished_goods_inspection_id,material_inspection_id,plant_code) values(?,?,?,?,?,?,?,?,?,?)",
             type, barcode, name, productCode, materialCode, materialBatchNo, specification,
-            finishedGoodsInspectionId, materialInspectionId, plant());
-        return jdbc.queryForObject("select id from qms.trace_node where " + masterColumn + "=? and plant_code=?", Long.class, masterId, plant());
+            finishedGoodsInspectionId, materialInspectionId, plant);
+        return jdbc.queryForObject("select id from qms.trace_node where " + masterColumn + "=? and plant_code=?", Long.class, masterId, plant);
     }
 
     private Map<String, Object> mapMatRow(java.sql.ResultSet rs) throws java.sql.SQLException {
