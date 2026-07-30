@@ -12,11 +12,13 @@ import com.kangli.qms.domain.finishedgoods.mapper.FinishedGoodsInspectionMapper;
 import com.kangli.qms.service.finishedgoods.FinishedGoodsInspectionService;
 import com.kangli.qms.service.finishedgoods.dto.FinishedGoodsInspectionResponse;
 import com.kangli.qms.service.trace.IncomingTraceService;
+import com.kangli.qms.service.trace.NaturalKeyConflictMessageResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -66,8 +68,12 @@ public class FinishedGoodsInspectionServiceImpl
         assertReportNoUnique(record.getReportNo(), null);
         record.setCategory(normalizeCategory(record.getCategory()));
         applyDualSign(record, null, loginUser);
-        if (!save(record)) {
-            throw new BusinessException(ResultCode.INTERNAL_ERROR, "保存失败");
+        try {
+            if (!save(record)) {
+                throw new BusinessException(ResultCode.INTERNAL_ERROR, "保存失败");
+            }
+        } catch (DuplicateKeyException e) {
+            throw naturalKeyConflict(e);
         }
         return toResponse(getById(record.getId()));
     }
@@ -91,8 +97,12 @@ public class FinishedGoodsInspectionServiceImpl
                 ? normalizeCategory(record.getCategory())
                 : normalizeCategory(old.getCategory()));
         applyDualSign(record, old, loginUser);
-        if (!updateById(record)) {
-            throw new BusinessException(ResultCode.INTERNAL_ERROR, "更新失败");
+        try {
+            if (!updateById(record)) {
+                throw new BusinessException(ResultCode.INTERNAL_ERROR, "更新失败");
+            }
+        } catch (DuplicateKeyException e) {
+            throw naturalKeyConflict(e);
         }
         return toResponse(getById(id));
     }
@@ -201,6 +211,12 @@ public class FinishedGoodsInspectionServiceImpl
 
     private String normalizeCategory(String category) {
         return "半成品".equals(category) ? "半成品" : "成品";
+    }
+
+    private BusinessException naturalKeyConflict(DuplicateKeyException e) {
+        String message = NaturalKeyConflictMessageResolver.resolve(e.getMostSpecificCause().getMessage());
+        return new BusinessException(ResultCode.BAD_REQUEST,
+                message != null ? message : "保存数据时发生重复冲突");
     }
 
     private FinishedGoodsInspectionResponse toResponse(FinishedGoodsInspection e) {

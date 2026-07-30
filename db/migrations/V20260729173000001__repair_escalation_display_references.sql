@@ -34,7 +34,7 @@ SET material_code = (
     WHERE NULLIF(BTRIM(eo.material_code), '') IS NOT NULL
     ORDER BY eo.created_at DESC
     LIMIT 1
-)
+) 
 WHERE NULLIF(BTRIM(e.material_code), '') IS NULL;
 
 UPDATE qms.escalation
