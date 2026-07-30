@@ -6,6 +6,7 @@ import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
 import com.kangli.qms.domain.incoming.entity.MaterialInspection;
 import com.kangli.qms.service.finishedgoods.FinishedGoodsTraceNodeTypeResolver;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -43,6 +44,26 @@ public class IncomingTraceService {
             root.put("children", expand(((Number) root.get("id")).longValue(), up, new LinkedHashSet<>(), visited));
         }
         return result(root, visited.size(), direction, 0);
+    }
+
+    // trace root resolver
+    public String rootBarcode(String sourceType, long sourceId) {
+        if (sourceId <= 0) throw new IllegalArgumentException("??????????");
+        String masterColumn;
+        if ("FINISHED_GOODS".equals(sourceType)) {
+            masterColumn = "finished_goods_inspection_id";
+        } else if ("MATERIAL".equals(sourceType)) {
+            masterColumn = "material_inspection_id";
+        } else {
+            throw new IllegalArgumentException("??????????");
+        }
+        String barcode = jdbc.queryForObject(
+                "select barcode from qms.trace_node where " + masterColumn + "=? and plant_code=?",
+                String.class, sourceId, plant());
+        if (!StringUtils.hasText(barcode)) {
+            throw new IllegalArgumentException("?????????????");
+        }
+        return barcode.trim();
     }
 
     public Map<String, Object> node(long id) {
@@ -177,9 +198,21 @@ public class IncomingTraceService {
         }
 
         // 6. 创建关系（成品→来料，成品为父节点）
-        jdbc.update(
-            "insert into qms.trace_relation(parent_node_id, child_node_id, work_order_no, plant_code) values(?,?,?,?)",
-            fgNodeId, matNodeId, fgReportNo, plant());
+        try {
+            jdbc.update(
+                "insert into qms.trace_relation(parent_node_id, child_node_id, work_order_no, plant_code) values(?,?,?,?)",
+                fgNodeId, matNodeId, fgReportNo, plant());
+        } catch (DuplicateKeyException e) {
+            if (NaturalKeyConflictMessageResolver.resolve(e.getMostSpecificCause().getMessage()) != null) {
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("bound", false);
+                result.put("message", "该成品与来料已绑定，无需重复绑定");
+                result.put("finishedGoodsNodeId", fgNodeId);
+                result.put("materialNodeId", matNodeId);
+                return result;
+            }
+            throw e;
+        }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("bound", true);

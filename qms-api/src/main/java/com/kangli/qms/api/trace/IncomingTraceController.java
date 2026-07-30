@@ -12,6 +12,7 @@ public class IncomingTraceController {
     private final IncomingTraceService service;
     public IncomingTraceController(IncomingTraceService service){this.service=service;}
     @GetMapping("/tree") public R<Map<String,Object>> tree(@RequestParam String rootBarcode,@RequestParam(defaultValue="DOWN")String direction){return R.ok(service.tree(rootBarcode,direction));}
+    @GetMapping("/root-barcode") public R<String> rootBarcode(@RequestParam String sourceType, @RequestParam long sourceId){return R.ok(service.rootBarcode(sourceType, sourceId));}
     @GetMapping("/nodes/{id}") public R<Map<String,Object>> node(@PathVariable long id){return R.ok(service.node(id));}
     @GetMapping("/nodes") public R<List<Map<String,Object>>> nodes(){return R.ok(service.nodes());}
     @GetMapping("/relations") public R<List<Map<String,Object>>> relations(){return R.ok(service.relations());}
