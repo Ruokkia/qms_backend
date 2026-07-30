@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kangli.qms.common.*;
 import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
 import com.kangli.qms.service.finishedgoods.FinishedGoodsInspectionService;
+import com.kangli.qms.service.finishedgoods.dto.FinishedGoodsInspectionResponse;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
@@ -31,11 +32,12 @@ public class FinishedGoodsInspectionController {
 
     @GetMapping
     @ApiOperation(value = "分页查询成品入库检验")
-    public R<PageResult<FinishedGoodsInspection>> list(
+    public R<PageResult<FinishedGoodsInspectionResponse>> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String inspectionResult,
+            @RequestParam(required = false) String category,
             @RequestParam(required = false) String qcReview,
             @RequestParam(required = false) String mgrApproval,
             @RequestParam(required = false) String startDate,
@@ -52,6 +54,9 @@ public class FinishedGoodsInspectionController {
         if (StringUtils.hasText(inspectionResult)) {
             wrapper.eq(FinishedGoodsInspection::getInspectionResult, inspectionResult);
         }
+        if (StringUtils.hasText(category)) {
+            wrapper.eq(FinishedGoodsInspection::getCategory, category);
+        }
         if (StringUtils.hasText(qcReview)) {
             wrapper.eq(FinishedGoodsInspection::getQcReview, qcReview);
         }
@@ -65,45 +70,39 @@ public class FinishedGoodsInspectionController {
             wrapper.le(FinishedGoodsInspection::getProductionDate, LocalDate.parse(endDate));
         }
         wrapper.orderByDesc(FinishedGoodsInspection::getCreatedAt);
-        return R.ok(PageResult.of(finishedGoodsService.page(pageObj, wrapper)));
+        return R.ok(finishedGoodsService.page(pageObj, wrapper));
     }
 
     @GetMapping("/{id}")
     @ApiOperation(value = "成品检验详情")
-    public R<FinishedGoodsInspection> detail(@PathVariable Long id) {
-        FinishedGoodsInspection record = finishedGoodsService.getById(id);
-        if (record == null) {
-            throw new BusinessException(ResultCode.NOT_FOUND, "记录不存在");
-        }
-        return R.ok(record);
+    public R<FinishedGoodsInspectionResponse> detail(@PathVariable Long id) {
+        return R.ok(finishedGoodsService.detail(id));
     }
 
     @PostMapping
     @ApiOperation(value = "新增成品入库检验")
-    public R<FinishedGoodsInspection> create(@RequestBody FinishedGoodsInspection record) {
+    public R<FinishedGoodsInspectionResponse> create(@RequestBody FinishedGoodsInspection record) {
         LoginUser loginUser = getCurrentLoginUser();
         record.setPlantCode(loginUser.getPlantCode().name());
         record.setPlantName(loginUser.getPlantCode().getChineseName());
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
-        finishedGoodsService.save(record);
-        return R.ok(record, "新增成功");
+        return R.ok(finishedGoodsService.create(record, loginUser), "新增成功");
     }
 
     @PutMapping("/{id}")
     @ApiOperation(value = "更新成品入库检验")
-    public R<Void> update(@PathVariable Long id, @RequestBody FinishedGoodsInspection record) {
-        record.setId(id);
+    public R<FinishedGoodsInspectionResponse> update(@PathVariable Long id,
+                                                     @RequestBody FinishedGoodsInspection record) {
         LoginUser loginUser = getCurrentLoginUser();
         record.setUpdatedBy(loginUser.getRealName());
-        finishedGoodsService.updateById(record);
-        return R.ok(null, "更新成功");
+        return R.ok(finishedGoodsService.update(id, record, loginUser), "更新成功");
     }
 
     @DeleteMapping("/{id}")
     @ApiOperation(value = "逻辑删除成品入库检验")
     public R<Void> delete(@PathVariable Long id) {
-        finishedGoodsService.removeById(id);
+        finishedGoodsService.delete(id);
         return R.ok(null, "删除成功");
     }
 
