@@ -81,7 +81,7 @@ public class MaterialInspectionServiceImpl
             stats.setUrgentCount(0);
         }
         stats.setTopDefectDesc(baseMapper.selectTopDefectDesc(plantCode));
-        stats.setSupplierRank(baseMapper.selectSupplierRank(plantCode));
+        stats.setSupplierRank(baseMapper.selectSupplierRank(plantCode, null, null));
         stats.setDailyTrend(baseMapper.selectDailyTrend(plantCode));
         return stats;
     }
@@ -268,14 +268,14 @@ public class MaterialInspectionServiceImpl
     }
 
     @Override
-    public KeySupplierTrendVO keySupplierTrend() {
+    public KeySupplierTrendVO keySupplierTrend(int topN, String startDate, String endDate) {
         LoginUser loginUser = getCurrentLoginUser();
         String plantCode = loginUser.getPlantCode().name();
 
-        // 重点供应商 Top5（近30天批次量）
-        List<SupplierRankItemVO> top = baseMapper.selectKeySuppliers(plantCode);
-        // 重点供应商近30天每日合格率矩阵
-        List<KeySupplierTrendRowVO> rows = baseMapper.selectKeySupplierTrend(plantCode);
+        // 重点供应商 TopN（时间范围内批次量）
+        List<SupplierRankItemVO> top = baseMapper.selectKeySuppliers(plantCode, topN, startDate, endDate);
+        // 重点供应商时间范围内每日合格率矩阵
+        List<KeySupplierTrendRowVO> rows = baseMapper.selectKeySupplierTrend(plantCode, topN, startDate, endDate);
 
         KeySupplierTrendVO vo = new KeySupplierTrendVO();
         List<KeySupplierTrendVO.KeySupplierItemVO> items = new ArrayList<>();
@@ -310,6 +310,13 @@ public class MaterialInspectionServiceImpl
         vo.setDates(dates);
         vo.setSeries(new ArrayList<>(seriesMap.values()));
         return vo;
+    }
+
+    @Override
+    public List<SupplierRankItemVO> supplierRank(String startDate, String endDate) {
+        LoginUser loginUser = getCurrentLoginUser();
+        String plantCode = loginUser.getPlantCode().name();
+        return baseMapper.selectSupplierRank(plantCode, startDate, endDate);
     }
 
     private LoginUser getCurrentLoginUser() {

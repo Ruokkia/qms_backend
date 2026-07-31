@@ -32,20 +32,26 @@
         LIMIT 10
     </select>
 
-    <!-- ===== M1: 供应商合格率排名 ===== -->
+    <!-- ===== M1: 供应商合格率排名（可选时间范围过滤） ===== -->
     <select id="selectSupplierRank" resultType="com.kangli.qms.domain.incoming.vo.SupplierRankItemVO">
         SELECT
-            supplier_name    AS supplierName,
-            supplier_code    AS supplierCode,
-            COUNT(*)         AS totalBatches,
+            supplier_name                                       AS supplierName,
+            MIN(COALESCE(supplier_code, supplier_name))         AS supplierCode,
+            COUNT(*)                                            AS totalBatches,
             ROUND(
                 COUNT(*) FILTER (WHERE inspection_result = '合格') * 100.0 / COUNT(*), 2
-            )                AS passRate
+            )                                                   AS passRate
         FROM qms.material_inspection
         WHERE is_deleted = 0
           AND plant_code = #{plantCode}
-          AND supplier_code IS NOT NULL
-        GROUP BY supplier_name, supplier_code
+          AND supplier_name IS NOT NULL
+          <if test="startDate != null and startDate != ''">
+              AND inspection_date &gt;= #{startDate}::date
+          </if>
+          <if test="endDate != null and endDate != ''">
+              AND inspection_date &lt;= #{endDate}::date
+          </if>
+        GROUP BY supplier_name
         ORDER BY totalBatches DESC
     </select>
 
@@ -96,7 +102,7 @@
           AND inspection_date &lt;= #{endDate}
     </select>
 
-    <!-- ===== M1: 重点供应商 Top5（近30天来料批次量最大） ===== -->
+    <!-- ===== M1: 重点供应商 TopN（自定义时间范围内来料批次量最大） ===== -->
     <select id="selectKeySuppliers" resultType="com.kangli.qms.domain.incoming.vo.SupplierRankItemVO">
         SELECT
             supplier_code    AS supplierCode,
@@ -109,27 +115,29 @@
         WHERE is_deleted = 0
           AND plant_code = #{plantCode}
           AND supplier_code IS NOT NULL
-          AND inspection_date &gt;= CURRENT_DATE - 30
+          AND inspection_date &gt;= #{startDate}::date
+          AND inspection_date &lt;= #{endDate}::date
         GROUP BY supplier_code, supplier_name
         ORDER BY totalBatches DESC
-        LIMIT 5
+        LIMIT #{topN}
     </select>
 
-    <!-- ===== M1: 重点供应商近30天每日合格率矩阵 ===== -->
+    <!-- ===== M1: 重点供应商自定义时间范围每日合格率矩阵 ===== -->
     <select id="selectKeySupplierTrend" resultType="com.kangli.qms.domain.incoming.vo.KeySupplierTrendRowVO">
-        WITH top5 AS (
+        WITH topN AS (
             SELECT supplier_code, supplier_name
             FROM qms.material_inspection
             WHERE is_deleted = 0
               AND plant_code = #{plantCode}
               AND supplier_code IS NOT NULL
-              AND inspection_date &gt;= CURRENT_DATE - 30
+              AND inspection_date &gt;= #{startDate}::date
+              AND inspection_date &lt;= #{endDate}::date
             GROUP BY supplier_code, supplier_name
             ORDER BY COUNT(*) DESC
-            LIMIT 5
+            LIMIT #{topN}
         ),
         ds AS (
-            SELECT generate_series(CURRENT_DATE - 29, CURRENT_DATE, '1 day')::date AS d
+            SELECT generate_series(#{startDate}::date, #{endDate}::date, '1 day')::date AS d
         )
         SELECT
             t.supplier_code                                   AS supplierCode,
@@ -139,7 +147,7 @@
                 COUNT(m.id) FILTER (WHERE m.inspection_result = '合格') * 100.0
                 / NULLIF(COUNT(m.id), 0), 2
             )                                                 AS passRate
-        FROM top5 t
+        FROM topN t
         CROSS JOIN ds
         LEFT JOIN qms.material_inspection m
             ON m.supplier_code = t.supplier_code
