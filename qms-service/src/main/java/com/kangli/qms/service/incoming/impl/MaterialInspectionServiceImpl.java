@@ -14,7 +14,6 @@ import com.kangli.qms.domain.incoming.entity.MaterialInspection;
 import com.kangli.qms.domain.incoming.mapper.MaterialInspectionMapper;
 import com.kangli.qms.service.exception.ExceptionService;
 import com.kangli.qms.service.incoming.MaterialInspectionService;
-import com.kangli.qms.service.trace.IncomingTraceService;
 import com.kangli.qms.domain.incoming.vo.KeySupplierTrendVO;
 import com.kangli.qms.domain.incoming.vo.KeySupplierTrendRowVO;
 import com.kangli.qms.domain.incoming.vo.MaterialInspectionStatsVO;
@@ -30,11 +29,25 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.web.multipart.MultipartFile;
+
+import com.kangli.qms.service.incoming.dto.MaterialInspectionImportPreviewVO;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 
 @Slf4j
 @Service
@@ -43,14 +56,11 @@ public class MaterialInspectionServiceImpl
         implements MaterialInspectionService {
 
     private final ExceptionService exceptionService;
-    private final IncomingTraceService incomingTraceService;
     private final TransactionTemplate requiresNewTemplate;
 
     public MaterialInspectionServiceImpl(ExceptionService exceptionService,
-                                         IncomingTraceService incomingTraceService,
                                          PlatformTransactionManager transactionManager) {
         this.exceptionService = exceptionService;
-        this.incomingTraceService = incomingTraceService;
         this.requiresNewTemplate = new TransactionTemplate(transactionManager);
         this.requiresNewTemplate.setPropagationBehavior(Propagation.REQUIRES_NEW.value());
     }
@@ -142,7 +152,6 @@ public class MaterialInspectionServiceImpl
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
         baseMapper.insert(record);
-        incomingTraceService.syncMaterialNode(record);
 
         Long exId = null;
         if ("不合格".equals(record.getInspectionResult()) && autoCreateException) {
@@ -188,7 +197,6 @@ public class MaterialInspectionServiceImpl
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
         baseMapper.insert(record);
-        incomingTraceService.syncMaterialNode(record);
 
         if ("不合格".equals(record.getInspectionResult()) && autoCreateException) {
             exceptionService.createFromMaterialInspection(record, loginUser);
@@ -199,27 +207,38 @@ public class MaterialInspectionServiceImpl
     @Override
     @Transactional
     public boolean save(MaterialInspection entity) {
-        boolean saved = super.save(entity);
-        if (saved) {
-            incomingTraceService.syncMaterialNode(entity);
-        }
-        return saved;
+        return super.save(entity);
     }
 
     @Override
     @Transactional
     public boolean updateById(MaterialInspection entity) {
-        boolean updated = super.updateById(entity);
-        if (updated) {
-            incomingTraceService.syncMaterialNode(getById(entity.getId()));
+        MaterialInspection before = getById(entity.getId());
+        if (before == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "物料检验记录不存在：" + entity.getId());
         }
-        return updated;
+        String oldResult = before.getInspectionResult();
+
+        boolean updated = super.updateById(entity);
+        if (!updated) {
+            return false;
+        }
+
+        MaterialInspection after = getById(entity.getId());
+
+        // 状态由"合格"降级为"不合格"：同一事务内强制生成关联异常单（强一致，不依赖对账）
+        if ("合格".equals(oldResult) && "不合格".equals(after.getInspectionResult())) {
+            LoginUser loginUser = getCurrentLoginUser();
+            exceptionService.createFromMaterialInspection(after, loginUser);
+            log.info("来料检验状态 合格→不合格，已自动创建异常单：materialInspectionId={}", after.getId());
+        }
+        return true;
     }
 
     @Override
     public List<MaterialInspection> findUnlinkedUnqualified(String startDate, String endDate, String plantCode) {
-        LocalDate start = StringUtils.hasText(startDate) ? LocalDate.parse(startDate) : LocalDate.now().minusDays(30);
-        LocalDate end = StringUtils.hasText(endDate) ? LocalDate.parse(endDate) : LocalDate.now();
+        LocalDate start = StringUtils.hasText(startDate) ? LocalDate.parse(startDate) : LocalDate.now(ZoneId.of("Asia/Shanghai")).minusDays(30);
+        LocalDate end = StringUtils.hasText(endDate) ? LocalDate.parse(endDate) : LocalDate.now(ZoneId.of("Asia/Shanghai"));
         LocalDateTime startAt = start.atStartOfDay();
         LocalDateTime endAt = end.atTime(23, 59, 59);
 
@@ -299,5 +318,224 @@ public class MaterialInspectionServiceImpl
             throw new BusinessException(ResultCode.UNAUTHORIZED, "未获取到登录用户信息");
         }
         return loginUser;
+    }
+
+    @Override
+    public MaterialInspectionImportPreviewVO previewImport(MultipartFile file) {
+        MaterialInspectionImportPreviewVO vo = new MaterialInspectionImportPreviewVO();
+        List<MaterialInspection> list = new ArrayList<>();
+        List<MaterialInspectionImportPreviewVO.PreviewFailItem> errors = new ArrayList<>();
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "导入文件为空");
+        }
+        LoginUser loginUser = getCurrentLoginUser();
+        String plantCode = loginUser.getPlantCode().name();
+        Set<String> seenRecordNos = new HashSet<>();
+        try (InputStream is = file.getInputStream();
+             Workbook wb = WorkbookFactory.create(is)) {
+            Sheet sheet = wb.getSheetAt(0);
+            if (sheet == null) {
+                throw new BusinessException(ResultCode.IMPORT_RECORD_INVALID, "Excel 无工作表");
+            }
+            Row header = sheet.getRow(0);
+            if (header == null) {
+                throw new BusinessException(ResultCode.IMPORT_RECORD_INVALID, "Excel 缺少表头行");
+            }
+            Map<String, Integer> colIndex = new HashMap<>();
+            for (Cell c : header) {
+                String h = readString(c);
+                if (StringUtils.hasText(h)) {
+                    colIndex.put(h.trim(), c.getColumnIndex());
+                }
+            }
+            int last = sheet.getLastRowNum();
+            for (int r = 1; r <= last; r++) {
+                Row row = sheet.getRow(r);
+                if (row == null || isRowEmpty(row)) {
+                    continue;
+                }
+                int rowIndex = r + 1;
+                String recordNo = readString(cell(row, colIndex.get("记录编号")));
+                if (StringUtils.hasText(recordNo) && !seenRecordNos.add(recordNo)) {
+                    addPreviewFail(errors, rowIndex, recordNo, "Excel 内记录编号重复");
+                    continue;
+                }
+                try {
+                    MaterialInspection record = parseRow(row, colIndex, plantCode, loginUser);
+                    validateImportRecord(record, rowIndex);
+                    list.add(record);
+                } catch (BusinessException be) {
+                    addPreviewFail(errors, rowIndex, recordNo, be.getMessage());
+                } catch (Exception ex) {
+                    addPreviewFail(errors, rowIndex, recordNo, "系统错误：" + ex.getMessage());
+                }
+            }
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception ex) {
+            throw new BusinessException(ResultCode.INTERNAL_ERROR, "Excel 解析失败：" + ex.getMessage());
+        }
+        vo.setList(list);
+        vo.setErrors(errors);
+        vo.setValidCount(list.size());
+        vo.setTotalCount(list.size() + errors.size());
+        return vo;
+    }
+
+    @Override
+    public byte[] generateTemplate() {
+        String[] headers = {
+                "记录编号", "检验结果", "检验日期", "判定日期", "到货日期",
+                "供应商名称", "供应商编码", "物料编码", "物料名称", "规格型号",
+                "物料批号", "送检数量", "合格数量", "不良数量", "检验员",
+                "审核状态", "不合格描述", "处理方式", "工序号", "入库单号", "采购单号"
+        };
+        try (Workbook wb = new XSSFWorkbook()) {
+            Sheet sheet = wb.createSheet("来料检验导入模板");
+            Row header = sheet.createRow(0);
+            CellStyle requiredStyle = wb.createCellStyle();
+            requiredStyle.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.index);
+            requiredStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+            for (int i = 0; i < headers.length; i++) {
+                Cell cell = header.createCell(i);
+                cell.setCellValue(headers[i]);
+                if (i < 2) {
+                    cell.setCellStyle(requiredStyle);
+                }
+            }
+            Row example = sheet.createRow(1);
+            String[] exampleValues = {
+                    "IMP-2026-0001", "合格", "2026-01-01", "2026-01-01", "2026-01-01",
+                    "示例供应商", "SUP-001", "MAT-001", "示例物料", "规格A",
+                    "BATCH-001", "100", "98", "2", "张三",
+                    "待审核", "外观划伤", "挑选", "P10", "IN-001", "PO-001"
+            };
+            for (int i = 0; i < exampleValues.length; i++) {
+                example.createCell(i).setCellValue(exampleValues[i]);
+            }
+            for (int i = 0; i < headers.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            wb.write(bos);
+            return bos.toByteArray();
+        } catch (Exception ex) {
+            throw new BusinessException(ResultCode.INTERNAL_ERROR, "模板生成失败：" + ex.getMessage());
+        }
+    }
+
+    private MaterialInspection parseRow(Row row, Map<String, Integer> col, String plantCode, LoginUser loginUser) {
+        MaterialInspection e = new MaterialInspection();
+        e.setRecordNo(readString(cell(row, col.get("记录编号"))));
+        e.setInspectionResult(readString(cell(row, col.get("检验结果"))));
+        e.setInspectionDate(readDate(cell(row, col.get("检验日期"))));
+        e.setJudgementDate(readDate(cell(row, col.get("判定日期"))));
+        e.setArrivalDate(readDate(cell(row, col.get("到货日期"))));
+        e.setSupplierName(readString(cell(row, col.get("供应商名称"))));
+        e.setSupplierCode(readString(cell(row, col.get("供应商编码"))));
+        e.setMaterialCode(readString(cell(row, col.get("物料编码"))));
+        e.setMaterialName(readString(cell(row, col.get("物料名称"))));
+        e.setSpecModel(readString(cell(row, col.get("规格型号"))));
+        e.setMaterialBatchNo(readString(cell(row, col.get("物料批号"))));
+        e.setSubmittedQty(readDecimal(cell(row, col.get("送检数量"))));
+        e.setQualifiedQty(readDecimal(cell(row, col.get("合格数量"))));
+        e.setUnqualifiedQty(readDecimal(cell(row, col.get("不良数量"))));
+        e.setInspector(readString(cell(row, col.get("检验员"))));
+        e.setReviewStatus(readString(cell(row, col.get("审核状态"))));
+        e.setDefectDesc(readString(cell(row, col.get("不合格描述"))));
+        e.setHandlingMethod(readString(cell(row, col.get("处理方式"))));
+        e.setProcessNo(readString(cell(row, col.get("工序号"))));
+        e.setInboundNo(readString(cell(row, col.get("入库单号"))));
+        e.setPurchaseOrder(readString(cell(row, col.get("采购单号"))));
+        return e;
+    }
+
+    private Cell cell(Row row, Integer idx) {
+        if (idx == null) {
+            return null;
+        }
+        return row.getCell(idx);
+    }
+
+    private String readString(Cell c) {
+        if (c == null) {
+            return "";
+        }
+        switch (c.getCellType()) {
+            case STRING:
+                return c.getStringCellValue();
+            case NUMERIC:
+                if (DateUtil.isCellDateFormatted(c)) {
+                    return c.getLocalDateTimeCellValue().toLocalDate().toString();
+                }
+                double d = c.getNumericCellValue();
+                if (d == (long) d) {
+                    return String.valueOf((long) d);
+                }
+                return String.valueOf(d);
+            case BOOLEAN:
+                return String.valueOf(c.getBooleanCellValue());
+            default:
+                return "";
+        }
+    }
+
+    private BigDecimal readDecimal(Cell c) {
+        String s = readString(c);
+        if (!StringUtils.hasText(s)) {
+            return null;
+        }
+        try {
+            return new BigDecimal(s.trim());
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private LocalDate readDate(Cell c) {
+        if (c == null) {
+            return null;
+        }
+        if (c.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(c)) {
+            return c.getLocalDateTimeCellValue().toLocalDate();
+        }
+        return toLocalDate(readString(c));
+    }
+
+    private LocalDate toLocalDate(String s) {
+        if (!StringUtils.hasText(s)) {
+            return null;
+        }
+        String t = s.trim().replace('/', '-');
+        try {
+            return LocalDate.parse(t, DateTimeFormatter.ofPattern("yyyy-M-d"));
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDate.parse(t, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDate.parse(t);
+        } catch (DateTimeParseException ex) {
+            return null;
+        }
+    }
+
+    private boolean isRowEmpty(Row row) {
+        for (Cell c : row) {
+            if (c != null && StringUtils.hasText(readString(c))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void addPreviewFail(List<MaterialInspectionImportPreviewVO.PreviewFailItem> list, int rowIndex, String recordNo, String reason) {
+        MaterialInspectionImportPreviewVO.PreviewFailItem f = new MaterialInspectionImportPreviewVO.PreviewFailItem();
+        f.setRowIndex(rowIndex);
+        f.setRecordNo(recordNo);
+        f.setReason(reason);
+        list.add(f);
     }
 }

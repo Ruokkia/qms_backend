@@ -13,8 +13,8 @@ public final class NaturalKeyConflictMessageResolver {
         if (databaseMessage.contains("uq_finished_goods_report_no_active")) {
             return "报告编号已存在，请勿重复提交";
         }
-        if (databaseMessage.contains("uq_trace_relation_binding")) {
-            return "该成品与来料已绑定，无需重复绑定";
+        if (databaseMessage.contains("uq_cmb_nat_key")) {
+            return "该绑定关系已存在（同一工单+产品条码+物料条码+工序），请勿重复绑定";
         }
         return null;
     }

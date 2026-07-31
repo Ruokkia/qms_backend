@@ -11,7 +11,6 @@ import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
 import com.kangli.qms.domain.finishedgoods.mapper.FinishedGoodsInspectionMapper;
 import com.kangli.qms.service.finishedgoods.FinishedGoodsInspectionService;
 import com.kangli.qms.service.finishedgoods.dto.FinishedGoodsInspectionResponse;
-import com.kangli.qms.service.trace.IncomingTraceService;
 import com.kangli.qms.service.trace.NaturalKeyConflictMessageResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
@@ -21,6 +20,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -37,10 +37,8 @@ public class FinishedGoodsInspectionServiceImpl
     private static final String PENDING = "待审核";
     private static final String APPROVED = "已审核";
     private static final String REJECTED = "驳回";
-    private final IncomingTraceService incomingTraceService;
 
-    public FinishedGoodsInspectionServiceImpl(IncomingTraceService incomingTraceService) {
-        this.incomingTraceService = incomingTraceService;
+    public FinishedGoodsInspectionServiceImpl() {
     }
 
     @Override
@@ -164,7 +162,7 @@ public class FinishedGoodsInspectionServiceImpl
 
         if (APPROVED.equals(newQc) && !APPROVED.equals(oldQc)) {
             record.setQcReviewer(loginUser.getRealName());
-            record.setQcReviewTime(LocalDateTime.now());
+            record.setQcReviewTime(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
         } else if (!APPROVED.equals(newQc)) {
             record.setQcReviewer(null);
             record.setQcReviewTime(null);
@@ -172,7 +170,7 @@ public class FinishedGoodsInspectionServiceImpl
 
         if (APPROVED.equals(newMgr) && !APPROVED.equals(oldMgr)) {
             record.setMgrRepresentative(loginUser.getRealName());
-            record.setMgrApprovalTime(LocalDateTime.now());
+            record.setMgrApprovalTime(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
         } else if (!APPROVED.equals(newMgr)) {
             record.setMgrRepresentative(null);
             record.setMgrApprovalTime(null);
@@ -228,20 +226,12 @@ public class FinishedGoodsInspectionServiceImpl
     @Override
     @Transactional
     public boolean save(FinishedGoodsInspection entity) {
-        boolean saved = super.save(entity);
-        if (saved) {
-            incomingTraceService.syncFinishedGoodsNode(entity);
-        }
-        return saved;
+        return super.save(entity);
     }
 
     @Override
     @Transactional
     public boolean updateById(FinishedGoodsInspection entity) {
-        boolean updated = super.updateById(entity);
-        if (updated) {
-            incomingTraceService.syncFinishedGoodsNode(getById(entity.getId()));
-        }
-        return updated;
+        return super.updateById(entity);
     }
 }

@@ -59,6 +59,8 @@ public class MaterialInspection implements Serializable {
     private String specModel;
     /** 物料批号（追溯核心键） */
     private String materialBatchNo;
+    /** 物料条码（SN 级追溯标识，全局唯一） */
+    private String materialBarcode;
     private BigDecimal qualifiedQty;
     private BigDecimal unqualifiedQty;
     private BigDecimal submittedQty;

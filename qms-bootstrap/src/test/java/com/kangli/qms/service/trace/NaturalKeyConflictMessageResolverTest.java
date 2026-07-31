@@ -13,8 +13,8 @@ class NaturalKeyConflictMessageResolverTest {
     }
 
     @Test
-    void translatesTraceRelationNaturalKeyConflict() {
-        assertEquals("该成品与来料已绑定，无需重复绑定",
-                NaturalKeyConflictMessageResolver.resolve("duplicate key value violates unique constraint uq_trace_relation_binding"));
+    void translatesCriticalMaterialBindingNaturalKeyConflict() {
+        assertEquals("该绑定关系已存在（同一工单+产品条码+物料条码+工序），请勿重复绑定",
+                NaturalKeyConflictMessageResolver.resolve("duplicate key value violates unique constraint uq_cmb_nat_key"));
     }
 }

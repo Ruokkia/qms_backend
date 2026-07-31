@@ -9,12 +9,20 @@ target/
 # Logs
 *.log
 
+# Maven output
+mvn_output.txt
+
 # IDE metadata
 .idea/
 *.iml
 .classpath
 .project
 .settings/
+qms-bootstrap/bin/
+
+# Local AI working files
+.planning/
+docs/superpowers/
 
 # Operating-system files
 .DS_Store
