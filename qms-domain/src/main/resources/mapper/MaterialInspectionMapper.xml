@@ -38,9 +38,14 @@
             supplier_name                                       AS supplierName,
             MIN(COALESCE(supplier_code, supplier_name))         AS supplierCode,
             COUNT(*)                                            AS totalBatches,
+            COUNT(*) FILTER (WHERE inspection_result = '合格')  AS qualifiedBatches,
+            COUNT(*) FILTER (WHERE inspection_result = '不合格') AS unqualifiedBatches,
             ROUND(
                 COUNT(*) FILTER (WHERE inspection_result = '合格') * 100.0 / COUNT(*), 2
-            )                                                   AS passRate
+            )                                                   AS passRate,
+            ROUND(
+                COUNT(*) FILTER (WHERE inspection_result = '不合格') * 100.0 / NULLIF(COUNT(*), 0), 2
+            )                                                   AS unqualifiedRate
         FROM qms.material_inspection
         WHERE is_deleted = 0
           AND plant_code = #{plantCode}

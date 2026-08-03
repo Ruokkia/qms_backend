@@ -25,6 +25,15 @@ public class SupplierRankItemVO implements Serializable {
     @ApiModelProperty(value = "总批次数")
     private Integer totalBatches;
 
+    @ApiModelProperty(value = "合格批次数")
+    private Integer qualifiedBatches;
+
+    @ApiModelProperty(value = "不合格批次数")
+    private Integer unqualifiedBatches;
+
     @ApiModelProperty(value = "合格率（%）")
     private BigDecimal passRate;
+
+    @ApiModelProperty(value = "不合格率（%）")
+    private BigDecimal unqualifiedRate;
 }
