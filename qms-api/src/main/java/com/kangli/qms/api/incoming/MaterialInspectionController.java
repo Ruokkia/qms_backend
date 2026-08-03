@@ -125,13 +125,6 @@ public class MaterialInspectionController {
         return R.ok(record);
     }
 
-    @PostMapping
-    @ApiOperation(value = "新增物料检验记录", notes = "inspectionResult=不合格 且 autoCreateException=true 时自动创建异常单")
-    public R<MaterialInspection> create(@RequestBody MaterialInspection record,
-                                        @RequestParam(required = false, defaultValue = "true") boolean autoCreateException) {
-        return R.ok(materialInspectionService.saveWithException(record, autoCreateException), "新增成功");
-    }
-
     @PostMapping("/import")
     @ApiOperation(value = "批量导入物料检验记录", notes = "默认自动为不合格记录创建异常单")
     public R<MaterialInspectionImportResultVO> importRecords(@RequestBody MaterialInspectionImportDTO dto) {

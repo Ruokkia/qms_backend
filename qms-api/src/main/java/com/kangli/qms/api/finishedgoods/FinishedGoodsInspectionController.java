@@ -49,6 +49,7 @@ public class FinishedGoodsInspectionController {
         if (StringUtils.hasText(keyword)) {
             wrapper.and(w -> w.like(FinishedGoodsInspection::getReportNo, keyword)
                     .or().like(FinishedGoodsInspection::getProductName, keyword)
+                    .or().like(FinishedGoodsInspection::getMaterialCode, keyword)
                     .or().like(FinishedGoodsInspection::getProdBatchOrSn, keyword));
         }
         if (StringUtils.hasText(inspectionResult)) {
@@ -77,17 +78,6 @@ public class FinishedGoodsInspectionController {
     @ApiOperation(value = "成品检验详情")
     public R<FinishedGoodsInspectionResponse> detail(@PathVariable Long id) {
         return R.ok(finishedGoodsService.detail(id));
-    }
-
-    @PostMapping
-    @ApiOperation(value = "新增成品入库检验")
-    public R<FinishedGoodsInspectionResponse> create(@RequestBody FinishedGoodsInspection record) {
-        LoginUser loginUser = getCurrentLoginUser();
-        record.setPlantCode(loginUser.getPlantCode().name());
-        record.setPlantName(loginUser.getPlantCode().getChineseName());
-        record.setCreatedBy(loginUser.getRealName());
-        record.setUpdatedBy(loginUser.getRealName());
-        return R.ok(finishedGoodsService.create(record, loginUser), "新增成功");
     }
 
     @PutMapping("/{id}")
