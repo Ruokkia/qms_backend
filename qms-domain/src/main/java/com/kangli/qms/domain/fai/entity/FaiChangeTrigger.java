@@ -25,14 +25,20 @@ public class FaiChangeTrigger implements Serializable {
 
     /** 变更类型：换模具/升级系统/换批次/换设备/材料批次 */
     private String triggerType;
-    /** 工单号 */
-    private String workOrderNo;
-    /** 物料代码 */
-    private String materialCode;
-    /** 物料名称 */
-    private String materialName;
+    /** 分类：PRODUCT(产品) / MATERIAL(物料)，二选一 */
+    private String itemType;
+    /** 产品/物料代码（随 itemType 取值） */
+    private String itemCode;
+    /** 产品/物料名称（随 itemType 取值） */
+    private String itemName;
+    /** 产品/物料条码（随 itemType 取值） */
+    private String itemBarcode;
     /** 批次号 */
     private String batchNo;
+    /** 物料代码（冗余兼容列，落库时与 itemCode 同步） */
+    private String materialCode;
+    /** 物料名称（冗余兼容列，落库时与 itemName 同步） */
+    private String materialName;
     /** 工序：装配/焊接/检测（红线固定） */
     private String processName;
     private String processCode;

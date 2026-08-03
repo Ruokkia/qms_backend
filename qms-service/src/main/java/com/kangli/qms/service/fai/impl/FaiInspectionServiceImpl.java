@@ -17,7 +17,6 @@ import com.kangli.qms.service.fai.dto.FaiStandardResponse;
 import com.kangli.qms.domain.fai.entity.FaiChangeTrigger;
 import com.kangli.qms.domain.fai.entity.FaiInspectionItem;
 import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
-import com.kangli.qms.domain.fai.entity.FaiInspectionStandard;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandardItem;
 import com.kangli.qms.domain.fai.entity.FaiSignature;
 import com.kangli.qms.domain.spc.entity.SpcParameter;
@@ -29,8 +28,10 @@ import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardItemMapper;
 import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardMapper;
 import com.kangli.qms.domain.fai.mapper.FaiSignatureMapper;
 import com.kangli.qms.domain.auth.mapper.SysUserMapper;
+import com.kangli.qms.service.admin.AuditLogService;
 import com.kangli.qms.service.exception.ExceptionService;
 import com.kangli.qms.service.fai.FaiInspectionService;
+import com.kangli.qms.service.fai.SignatureIntegrity;
 import com.kangli.qms.service.spc.SpcSubgroupService;
 import com.kangli.qms.service.fai.FaiStandardService;
 import lombok.extern.slf4j.Slf4j;
@@ -41,10 +42,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -75,8 +78,10 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
     private final FaiSignatureMapper signatureMapper;
     private final FaiStandardService standardService;
     private final SpcSubgroupService spcSubgroupService;
+    private final ExceptionService exceptionService;
     private final SysUserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
+    private final AuditLogService auditLogService;
 
     public FaiInspectionServiceImpl(FaiInspectionRecordMapper recordMapper,
                                     FaiInspectionItemMapper itemMapper,
@@ -86,7 +91,9 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
                                     FaiSignatureMapper signatureMapper,
                                     FaiStandardService standardService,
                                     SpcSubgroupService spcSubgroupService,
-                                    SysUserMapper userMapper) {
+                                    ExceptionService exceptionService,
+                                    SysUserMapper userMapper,
+                                    AuditLogService auditLogService) {
         this.recordMapper = recordMapper;
         this.itemMapper = itemMapper;
         this.changeTriggerMapper = changeTriggerMapper;
@@ -95,7 +102,9 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         this.signatureMapper = signatureMapper;
         this.standardService = standardService;
         this.spcSubgroupService = spcSubgroupService;
+        this.exceptionService = exceptionService;
         this.userMapper = userMapper;
+        this.auditLogService = auditLogService;
         this.passwordEncoder = new BCryptPasswordEncoder();
     }
 
@@ -116,7 +125,9 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         record.setBatchNo(trigger.getBatchNo());
         record.setProcessName(trigger.getProcessName());
         record.setProcessCode(trigger.getProcessCode());
-        record.setWorkOrderNo(trigger.getWorkOrderNo());
+        record.setItemType(trigger.getItemType());
+        record.setItemCode(trigger.getItemCode());
+        record.setItemName(trigger.getItemName());
         record.setInspectionResult("待判定");
         record.setSignatureStatus("未签");
         record.setPlantCode(plantCode);
@@ -179,8 +190,20 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         if (StringUtils.hasText(query.getMaterialName())) {
             wrapper.like(FaiInspectionRecord::getMaterialName, query.getMaterialName());
         }
-        if (StringUtils.hasText(query.getInspectionResult())) {
-            wrapper.eq(FaiInspectionRecord::getInspectionResult, query.getInspectionResult());
+        if (StringUtils.hasText(query.getItemType())) {
+            wrapper.eq(FaiInspectionRecord::getItemType, query.getItemType());
+        }
+        if (Boolean.TRUE.equals(query.getArchiveOnly())) {
+            // 档案模式：「未签名不进档案」，强制仅返回已签记录（不合格亦可进档案，便于查阅已签的不合格报告）；
+            // 忽略外部 inspectionResult 入参，由档案模式统一控制，避免冲突
+            wrapper.eq(FaiInspectionRecord::getSignatureStatus, "已签");
+        } else {
+            if (StringUtils.hasText(query.getInspectionResult())) {
+                wrapper.eq(FaiInspectionRecord::getInspectionResult, query.getInspectionResult());
+            }
+            if (StringUtils.hasText(query.getSignatureStatus())) {
+                wrapper.eq(FaiInspectionRecord::getSignatureStatus, query.getSignatureStatus());
+            }
         }
         wrapper.orderByDesc(FaiInspectionRecord::getCreatedAt);
         Page<FaiInspectionRecord> page = recordMapper.selectPage(pageObj, wrapper);
@@ -259,12 +282,16 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
                     "请先提交检验结果（录入实际值并完成判定）后再进行电子签名");
         }
         SysUser signer = verifySignaturePassword(request.getPassword(), loginUser);
-        LocalDateTime signedAt = LocalDateTime.now();
+        LocalDateTime signedAt = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
         String signedAtStr = signedAt.format(SIGN_DTF);
         String signerId = String.valueOf(signer.getId());
         String signerName = signer.getRealName();
         String raw = record.getFaiNo() + "|" + signerId + "|" + signedAtStr + "|" + request.getSignReason();
         String hash = sha256(raw);
+
+        // 内容绑定哈希：将电子签名与完整检验记录内容（逐项实际值/判定/标准值/上下限 + 主表结论）绑定，
+        // 满足 21 CFR Part 11「电子签名须与所签记录内容绑定、防事后篡改」要求
+        String contentHash = computeContentHash(record, listItems(record.getId()), signerId, signedAtStr, request.getSignReason());
 
         FaiSignature signature = new FaiSignature();
         signature.setFaiRecordId(record.getId());
@@ -272,6 +299,7 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         signature.setSignerName(signerName);
         signature.setSignType(request.getSignType());
         signature.setSignatureHash(hash);
+        signature.setContentHash(contentHash);
         signature.setSignedAt(signedAt);
         signature.setSignReason(request.getSignReason());
         signature.setPlantCode(record.getPlantCode());
@@ -312,12 +340,30 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         if (record == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "首件检验记录不存在");
         }
+        // 「未签名不进档案」：未完成电子签名的记录禁止获取完整报告（服务端硬拦截兜底）
+        if (!"已签".equals(record.getSignatureStatus())) {
+            throw new BusinessException(ResultCode.FORBIDDEN,
+                    "首件检验记录[" + id + "]尚未完成电子签名，禁止查看完整报告");
+        }
+        // 状态 + 哈希双校验：已签且内容绑定哈希一致方可导出；TAMPERED 视为签名无效/被篡改并拒绝
+        SignatureIntegrity integrity = verifySignatureIntegrity(id);
+        if (integrity == SignatureIntegrity.TAMPERED) {
+            auditLogService.record("fai_signature", id, "VERIFY", null, null,
+                    "电子签名完整性校验失败（疑似内容被篡改），拒绝导出报告；faiNo=" + record.getFaiNo());
+            throw new BusinessException(ResultCode.FORBIDDEN,
+                    "首件检验记录[" + id + "]电子签名完整性校验未通过（疑似内容被篡改），禁止导出报告");
+        }
         FaiReportResponse resp = new FaiReportResponse();
         BeanUtils.copyProperties(record, resp);
         List<FaiInspectionItem> items = listItems(record.getId());
         List<FaiInspectionItemResponse> itemRespList = toItemResponses(record, items);
         resp.setItems(itemRespList);
         resp.setSignatures(listSignatures(record.getId()));
+        resp.setSignatureIntact(integrity == SignatureIntegrity.INTACT);
+        resp.setLegacySignature(integrity == SignatureIntegrity.LEGACY_UNVERIFIABLE);
+        if (integrity == SignatureIntegrity.LEGACY_UNVERIFIABLE) {
+            log.warn("历史遗留签名无法做内容绑定复核（content_hash 为空），按祖父条款允许导出报告：faiNo={}", record.getFaiNo());
+        }
 
         int total = itemRespList.size();
         int qualified = 0;
@@ -334,7 +380,7 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         resp.setUnqualifiedCount(unqualified);
         BigDecimal passRate = total == 0 ? BigDecimal.ZERO
                 : new BigDecimal(qualified).multiply(new BigDecimal("100"))
-                .divide(new BigDecimal(total), 2, BigDecimal.ROUND_HALF_UP);
+                .divide(new BigDecimal(total), 2, RoundingMode.HALF_UP);
         resp.setPassRate(passRate);
         return resp;
     }
@@ -407,8 +453,14 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         // 不合格优先；其次待判定；全部合格则合格
         record.setInspectionResult(hasFail ? "不合格" : (hasPending ? "待判定" : "合格"));
         // 结论回退为「待判定」(实际值未录全) 时，既往电子签名失效（须重新提交判定后方可再签）
-        if ("待判定".equals(record.getInspectionResult())) {
+        // L16：非「合格」即视为电子签名失效（含合格→不合格回退及待判定），需重新签字
+        if (!"合格".equals(record.getInspectionResult())) {
+            boolean wasSigned = "已签".equals(record.getSignatureStatus());
             record.setSignatureStatus("未签");
+            if (wasSigned) {
+                auditLogService.record("fai_inspection_record", record.getId(), "UPDATE", null, null,
+                        "首件检验结论非合格（" + record.getInspectionResult() + "），电子签名自动失效，须重新签字；faiNo=" + record.getFaiNo());
+            }
         }
         record.setUpdatedBy(loginUser.getRealName());
         recordMapper.updateById(record);
@@ -420,6 +472,8 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
                 trigger.setUpdatedBy(loginUser.getRealName());
                 changeTriggerMapper.updateById(trigger);
             }
+            // L30：首件不合格自动建异常整改单（去重由 createFromFai 保证）
+            exceptionService.createFromFai(record, loginUser);
         }
     }
 
@@ -479,7 +533,7 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
     }
 
     private String generateFaiNo(String plantCode) {
-        String dateStr = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String dateStr = LocalDateTime.now(ZoneId.of("Asia/Shanghai")).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         String prefix = "FAI-" + plantCode + "-" + dateStr + "-";
         Long count = recordMapper.selectCount(
                 new LambdaQueryWrapper<FaiInspectionRecord>().likeRight(FaiInspectionRecord::getFaiNo, prefix));
@@ -521,7 +575,64 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         List<FaiInspectionItem> items = listItems(record.getId());
         resp.setItems(toItemResponses(record, items));
         resp.setSignatures(listSignatures(record.getId()));
+        // 暴露签名完整性标记，便于前端识别历史遗留/被篡改记录
+        if ("已签".equals(record.getSignatureStatus())) {
+            SignatureIntegrity integrity = verifySignatureIntegrity(record.getId());
+            resp.setSignatureIntact(integrity == SignatureIntegrity.INTACT);
+            resp.setLegacySignature(integrity == SignatureIntegrity.LEGACY_UNVERIFIABLE);
+        } else {
+            resp.setSignatureIntact(false);
+            resp.setLegacySignature(false);
+        }
         return resp;
+    }
+
+    @Override
+    public SignatureIntegrity verifySignatureIntegrity(Long id) {
+        FaiInspectionRecord record = recordMapper.selectById(id);
+        if (record == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "首件检验记录不存在");
+        }
+        if (!"已签".equals(record.getSignatureStatus())) {
+            // 未签名，无完整性判定意义
+            return SignatureIntegrity.INTACT;
+        }
+        List<FaiSignature> sigs = listSignatures(id);
+        if (sigs.isEmpty()) {
+            // 状态为已签但无签名记录：数据异常，按被篡改处理
+            return SignatureIntegrity.TAMPERED;
+        }
+        FaiSignature sig = sigs.get(sigs.size() - 1);
+        if (sig.getContentHash() == null) {
+            // 历史遗留签名未绑定内容哈希，无法复核（祖父条款认可）
+            return SignatureIntegrity.LEGACY_UNVERIFIABLE;
+        }
+        String current = computeContentHash(record, listItems(id), sig.getSignerId(),
+                sig.getSignedAt() == null ? "" : sig.getSignedAt().format(SIGN_DTF), sig.getSignReason());
+        return current.equals(sig.getContentHash()) ? SignatureIntegrity.INTACT : SignatureIntegrity.TAMPERED;
+    }
+
+    /**
+     * 计算「内容绑定哈希」：将电子签名与完整检验记录内容绑定。
+     * <p>覆盖 faiNo|signerId|signedAt|signReason|主表结论 inspectionResult，以及逐项
+     * (paramCode|actualValue|result|standardValue|upperLimit|lowerLimit)，按上传顺序拼接。
+     * 任一检验数据或判定结论在签名后被篡改，重算哈希必然失配，满足 21 CFR Part 11 防篡改要求。</p>
+     */
+    String computeContentHash(FaiInspectionRecord record, List<FaiInspectionItem> items,
+                               String signerId, String signedAtStr, String signReason) {
+        StringBuilder itemsPart = new StringBuilder();
+        for (FaiInspectionItem it : items) {
+            itemsPart.append("|")
+                    .append(it.getParamCode() == null ? "" : it.getParamCode())
+                    .append("=").append(it.getActualValue() == null ? "" : it.getActualValue())
+                    .append("|").append(it.getResult() == null ? "" : it.getResult())
+                    .append("|").append(it.getStandardValue() == null ? "" : it.getStandardValue())
+                    .append("|").append(it.getUpperLimit() == null ? "" : it.getUpperLimit())
+                    .append("|").append(it.getLowerLimit() == null ? "" : it.getLowerLimit());
+        }
+        String raw = record.getFaiNo() + "|" + signerId + "|" + signedAtStr + "|"
+                + (signReason == null ? "" : signReason) + "|" + record.getInspectionResult() + itemsPart;
+        return sha256(raw);
     }
 
     private List<FaiInspectionItemResponse> toItemResponses(FaiInspectionRecord record, List<FaiInspectionItem> items) {

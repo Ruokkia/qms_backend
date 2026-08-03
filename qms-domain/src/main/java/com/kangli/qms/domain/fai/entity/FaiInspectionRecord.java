@@ -8,7 +8,6 @@ import com.baomidou.mybatisplus.annotation.Version;
 import lombok.Data;
 
 import java.io.Serializable;
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -38,8 +37,14 @@ public class FaiInspectionRecord implements Serializable {
     private String processName;
     /** 统一工序库编码 */
     private String processCode;
-    /** 工单号 */
+    /** 工单号（冗余兼容列：从变更触发的 itemCode 复制） */
     private String workOrderNo;
+    /** 分类：PRODUCT(产品) / MATERIAL(物料) */
+    private String itemType;
+    /** 产品/物料代码（随 itemType 取值） */
+    private String itemCode;
+    /** 产品/物料名称（随 itemType 取值） */
+    private String itemName;
     /** 判定结果：待判定/合格/不合格 */
     private String inspectionResult;
     /** 电子签名状态：未签/已签 */

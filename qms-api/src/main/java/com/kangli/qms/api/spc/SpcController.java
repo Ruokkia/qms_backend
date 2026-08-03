@@ -7,6 +7,7 @@ import com.kangli.qms.common.R;
 import com.kangli.qms.common.ResultCode;
 import com.kangli.qms.service.spc.dto.SpcCapabilityResultDTO;
 import com.kangli.qms.service.spc.dto.SpcChartDataDTO;
+import com.kangli.qms.service.spc.dto.SpcControlLimitResponse;
 import com.kangli.qms.service.spc.dto.SpcParameterRequest;
 import com.kangli.qms.service.spc.dto.SpcParameterResponse;
 import com.kangli.qms.service.spc.dto.SpcProcessRequest;
@@ -17,6 +18,8 @@ import com.kangli.qms.service.spc.dto.SpcPendingSampleAppendDTO;
 import com.kangli.qms.domain.spc.entity.SpcControlLimit;
 import com.kangli.qms.service.spc.SpcCapabilityService;
 import com.kangli.qms.service.spc.SpcChartService;
+import com.kangli.qms.common.SpcItemDictDTO;
+import com.kangli.qms.service.spc.SpcItemDictService;
 import com.kangli.qms.service.spc.SpcParameterService;
 import com.kangli.qms.service.spc.SpcProcessService;
 import com.kangli.qms.service.spc.SpcSubgroupService;
@@ -51,17 +54,20 @@ public class SpcController {
     private final SpcSubgroupService subgroupService;
     private final SpcChartService chartService;
     private final SpcCapabilityService capabilityService;
+    private final SpcItemDictService itemDictService;
 
     public SpcController(SpcProcessService processService,
                          SpcParameterService parameterService,
                          SpcSubgroupService subgroupService,
                          SpcChartService chartService,
-                         SpcCapabilityService capabilityService) {
+                         SpcCapabilityService capabilityService,
+                         SpcItemDictService itemDictService) {
         this.processService = processService;
         this.parameterService = parameterService;
         this.subgroupService = subgroupService;
         this.chartService = chartService;
         this.capabilityService = capabilityService;
+        this.itemDictService = itemDictService;
     }
 
     // ===== 工序管理 =====
@@ -144,6 +150,13 @@ public class SpcController {
         return R.ok(subgroupService.list(paramId, currentUser().getPlantCode().name()));
     }
 
+    @GetMapping("/subgroups/by-fai")
+    @ApiOperation(value = "按首件记录查询子组（用于 FAI 跳转 SPC 自动定位待补子组）")
+    public R<List<SpcSubgroupResponse>> listSubgroupsByFai(
+            @ApiParam(value = "首件记录 id") @RequestParam Long faiRecordId) {
+        return R.ok(subgroupService.listByFai(faiRecordId, currentUser().getPlantCode().name()));
+    }
+
     @GetMapping("/subgroups/{id}")
     @ApiOperation(value = "子组详情（含样本）")
     public R<SpcSubgroupResponse> subgroupDetail(@PathVariable Long id) {
@@ -168,20 +181,41 @@ public class SpcController {
 
     @GetMapping("/charts/{paramId}/xbar-r")
     @ApiOperation(value = "Xbar-R 控制图数据")
-    public R<SpcChartDataDTO> xbarRChart(@ApiParam(value = "参数 id") @PathVariable Long paramId) {
-        return R.ok(chartService.getChartData(paramId, "Xbar-R", currentUser().getPlantCode().name()));
+    public R<SpcChartDataDTO> xbarRChart(@ApiParam(value = "参数 id") @PathVariable Long paramId,
+                                         @ApiParam(value = "分类 PRODUCT/MATERIAL，可空") @RequestParam(required = false) String itemType,
+                                         @ApiParam(value = "产品/物料代码，可空") @RequestParam(required = false) String itemCode) {
+        return R.ok(chartService.getChartData(paramId, "Xbar-R", currentUser().getPlantCode().name(), itemType, itemCode));
     }
 
     @GetMapping("/charts/{paramId}/xbar-s")
     @ApiOperation(value = "Xbar-s 控制图数据")
-    public R<SpcChartDataDTO> xbarSChart(@ApiParam(value = "参数 id") @PathVariable Long paramId) {
-        return R.ok(chartService.getChartData(paramId, "Xbar-s", currentUser().getPlantCode().name()));
+    public R<SpcChartDataDTO> xbarSChart(@ApiParam(value = "参数 id") @PathVariable Long paramId,
+                                         @ApiParam(value = "分类 PRODUCT/MATERIAL，可空") @RequestParam(required = false) String itemType,
+                                         @ApiParam(value = "产品/物料代码，可空") @RequestParam(required = false) String itemCode) {
+        return R.ok(chartService.getChartData(paramId, "Xbar-s", currentUser().getPlantCode().name(), itemType, itemCode));
     }
 
     @PostMapping("/control-limits/{paramId}/recalc")
     @ApiOperation(value = "重新计算控制限")
-    public R<SpcControlLimit> recalcControlLimits(@ApiParam(value = "参数 id") @PathVariable Long paramId) {
-        return R.ok(chartService.recalcControlLimits(paramId, currentUser().getPlantCode().name()));
+    public R<SpcControlLimitResponse> recalcControlLimits(@ApiParam(value = "参数 id") @PathVariable Long paramId) {
+        SpcControlLimit cl = chartService.recalcControlLimits(paramId, currentUser().getPlantCode().name());
+        // 子组数不足（<2）时无法计算控制限，返回 null
+        return R.ok(cl == null ? null : toControlLimitResponse(cl));
+    }
+
+    // ===== 统一代码字典 =====
+
+    @GetMapping("/items/search")
+    @ApiOperation(value = "SPC 统一代码字典（已签首件 ∪ 已激活标准，按 itemType+itemCode 去重）")
+    public R<List<SpcItemDictDTO>> searchItems(
+            @ApiParam(value = "模糊关键字，匹配 itemCode/itemName，可空") @RequestParam(required = false) String keyword) {
+        return R.ok(itemDictService.search(currentUser().getPlantCode().name(), keyword));
+    }
+
+    private SpcControlLimitResponse toControlLimitResponse(SpcControlLimit cl) {
+        SpcControlLimitResponse resp = new SpcControlLimitResponse();
+        org.springframework.beans.BeanUtils.copyProperties(cl, resp);
+        return resp;
     }
 
     // ===== 过程能力 =====

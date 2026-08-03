@@ -20,17 +20,27 @@ public class CreateChangeTriggerRequest implements Serializable {
     @ApiModelProperty(value = "变更类型：换模具/升级系统/换批次/换设备/材料批次", required = true)
     private String triggerType;
 
-    @ApiModelProperty(value = "工单号")
-    private String workOrderNo;
+    @NotBlank(message = "分类不能为空")
+    @ApiModelProperty(value = "分类：PRODUCT(产品) / MATERIAL(物料)", required = true)
+    private String itemType;
 
-    @ApiModelProperty(value = "物料代码")
-    private String materialCode;
+    @ApiModelProperty(value = "产品/物料代码（随 itemType 取值）")
+    private String itemCode;
 
-    @ApiModelProperty(value = "物料名称")
-    private String materialName;
+    @ApiModelProperty(value = "产品/物料名称（随 itemType 取值）")
+    private String itemName;
+
+    @ApiModelProperty(value = "产品/物料条码（随 itemType 取值）")
+    private String itemBarcode;
 
     @ApiModelProperty(value = "批次号")
     private String batchNo;
+
+    @ApiModelProperty(value = "物料代码（冗余兼容列）")
+    private String materialCode;
+
+    @ApiModelProperty(value = "物料名称（冗余兼容列）")
+    private String materialName;
 
     @ApiModelProperty(value = "工序：装配/焊接/检测")
     private String processName;

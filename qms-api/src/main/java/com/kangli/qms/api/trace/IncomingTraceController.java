@@ -50,4 +50,20 @@ public class IncomingTraceController {
     public R<Map<String, Object>> summary() {
         return R.ok(service.summary());
     }
+
+    /** 按分类+条码查询单条产品/物料主数据（自动带出代码/名称/批次号） */
+    @GetMapping("/item")
+    public R<Map<String, Object>> itemByBarcode(@RequestParam String itemType,
+                                                @RequestParam String barcode) {
+        return R.ok(service.itemByBarcode(itemType, barcode));
+    }
+
+    /** 按分类+关键字模糊搜索产品/物料主数据，用于录入时下拉候选 */
+    @GetMapping("/search")
+    public R<List<Map<String, Object>>> searchByBarcode(
+            @RequestParam String itemType,
+            @RequestParam String keyword,
+            @RequestParam(defaultValue = "20") int limit) {
+        return R.ok(service.searchByBarcode(itemType, keyword, limit));
+    }
 }

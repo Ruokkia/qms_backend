@@ -27,6 +27,12 @@ public class FaiInspectionStandard implements Serializable {
     private String materialCode;
     /** 物料名称（冗余，便于展示） */
     private String materialName;
+    /** 分类：PRODUCT(产品)/MATERIAL(物料) */
+    private String itemType;
+    /** 产品/物料代码（随 itemType 取值，产品模式取产品代码，物料模式取物料代码） */
+    private String itemCode;
+    /** 产品/物料名称（随 itemType 取值） */
+    private String itemName;
     /** 工序：装配/焊接/检测 */
     private String processName;
     private String processCode;

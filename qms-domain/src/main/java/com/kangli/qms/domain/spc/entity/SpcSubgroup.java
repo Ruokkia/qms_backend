@@ -46,10 +46,14 @@ public class SpcSubgroup implements Serializable {
     private String workOrderNo;
     /** 来源批次号 */
     private String batchNo;
-    /** 来源物料代码 */
+    /** 来源物料代码（冗余兼容列：物料场景与 itemCode 同步） */
     private String materialCode;
     /** 来源物料名称 */
     private String materialName;
+    /** 分类：PRODUCT(产品) / MATERIAL(物料) */
+    private String itemType;
+    /** 产品/物料代码（随 itemType 取值，控制图关联维度） */
+    private String itemCode;
     /** 统一工序库编码 */
     private String processCode;
     /** 参数编码快照 */

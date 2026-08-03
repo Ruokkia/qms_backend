@@ -1,7 +1,6 @@
 package com.kangli.qms.service.spc;
 
 import com.kangli.qms.common.LoginUser;
-import com.kangli.qms.service.spc.dto.SpcFaiRecordResponse;
 import com.kangli.qms.service.spc.dto.SpcSubgroupResponse;
 import com.kangli.qms.service.spc.dto.SpcSubgroupSaveDTO;
 import com.kangli.qms.service.spc.dto.SpcPendingSampleAppendDTO;
@@ -24,6 +23,9 @@ public interface SpcSubgroupService {
 
     /** 子组列表（按参数 + 分公司） */
     List<SpcSubgroupResponse> list(Long paramId, String plantCode);
+
+    /** 子组列表（按首件记录 + 分公司，用于 FAI 跳转 SPC 自动定位待补子组） */
+    List<SpcSubgroupResponse> listByFai(Long faiRecordId, String plantCode);
 
     /** 子组详情（含样本） */
     SpcSubgroupResponse detail(Long id);

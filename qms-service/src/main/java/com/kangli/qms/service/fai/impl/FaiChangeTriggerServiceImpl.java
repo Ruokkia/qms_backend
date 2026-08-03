@@ -42,6 +42,13 @@ public class FaiChangeTriggerServiceImpl implements FaiChangeTriggerService {
     public FaiChangeTriggerResponse create(CreateChangeTriggerRequest request, LoginUser loginUser) {
         FaiChangeTrigger entity = new FaiChangeTrigger();
         BeanUtils.copyProperties(request, entity);
+        // 冗余兼容列同步：旧报表按 materialCode/materialName 读取
+        if (!StringUtils.hasText(entity.getMaterialCode())) {
+            entity.setMaterialCode(entity.getItemCode());
+        }
+        if (!StringUtils.hasText(entity.getMaterialName())) {
+            entity.setMaterialName(entity.getItemName());
+        }
         entity.setStatus("待检验");
         entity.setPlantCode(loginUser.getPlantCode().name());
         entity.setPlantName(loginUser.getPlantCode().getChineseName());
@@ -61,6 +68,9 @@ public class FaiChangeTriggerServiceImpl implements FaiChangeTriggerService {
         }
         if (StringUtils.hasText(query.getMaterialCode())) {
             wrapper.like(FaiChangeTrigger::getMaterialCode, query.getMaterialCode());
+        }
+        if (StringUtils.hasText(query.getItemType())) {
+            wrapper.eq(FaiChangeTrigger::getItemType, query.getItemType());
         }
         if (StringUtils.hasText(query.getBatchNo())) {
             wrapper.eq(FaiChangeTrigger::getBatchNo, query.getBatchNo());

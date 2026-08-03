@@ -17,9 +17,19 @@ public interface FaiStandardService {
     List<FaiStandardResponse> list(String plantCode);
 
     /**
+     * 标准模板列表（按分公司 + 分类隔离）。itemType 为空时返回全部。
+     */
+    List<FaiStandardResponse> listByItemType(String plantCode, String itemType);
+
+    /**
      * 查询某 物料+工序 的最新激活标准（含参数项）。
      */
     FaiStandardResponse latestActive(String materialCode, String processName, String plantCode);
+
+    /**
+     * 查询某 分类+代码+工序 的最新激活标准（含参数项）。区分产品/物料模板。
+     */
+    FaiStandardResponse latestActive(String itemCode, String itemType, String processName, String plantCode);
 
     /**
      * 新增标准模板（含参数项）。返回新标准 id。

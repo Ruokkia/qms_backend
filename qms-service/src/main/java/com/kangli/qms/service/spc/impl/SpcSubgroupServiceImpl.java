@@ -1,6 +1,5 @@
 package com.kangli.qms.service.spc.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.LoginUser;
@@ -36,6 +35,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -54,6 +54,7 @@ import java.util.stream.Collectors;
 public class SpcSubgroupServiceImpl implements SpcSubgroupService {
 
     private static final int SCALE = 6;
+    private static final String LIMIT_ONE = "LIMIT 1";
     private static final DateTimeFormatter YMD = DateTimeFormatter.ofPattern("yyyyMMdd");
 
     private final SpcSubgroupMapper subgroupMapper;
@@ -101,7 +102,8 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
             throw new BusinessException(ResultCode.BAD_REQUEST,
                     "样本数量必须等于子组大小 n=" + param.getSubgroupSize());
         }
-        return saveInternal(param, values, "手动录入", null, null, loginUser);
+        return saveInternal(param, values, "手动录入", null, null,
+                dto.getItemType(), dto.getItemCode(), loginUser);
     }
 
     @Override
@@ -122,14 +124,14 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
             process = processMapper.selectOne(Wrappers.lambdaQuery(SpcProcess.class)
                     .eq(SpcProcess::getPlantCode, fai.getPlantCode())
                     .eq(SpcProcess::getProcessCode, fai.getProcessCode())
-                    .eq(SpcProcess::getIsDeleted, 0).last("LIMIT 1"));
+                    .eq(SpcProcess::getIsDeleted, 0).last(LIMIT_ONE));
         }
         // 兼容迁移前的历史首件记录：仅在没有工序编码或编码未命中时才按名称回退匹配。
         if (process == null) {
             process = processMapper.selectOne(Wrappers.lambdaQuery(SpcProcess.class)
                     .eq(SpcProcess::getPlantCode, fai.getPlantCode())
                     .eq(SpcProcess::getProcessName, fai.getProcessName())
-                    .eq(SpcProcess::getIsDeleted, 0).last("LIMIT 1"));
+                    .eq(SpcProcess::getIsDeleted, 0).last(LIMIT_ONE));
         }
         if (process == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "首件工序未配置到SPC工序库：" + fai.getProcessName());
@@ -168,7 +170,7 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
                     .eq(SpcSubgroup::getFaiRecordId, faiRecordId).eq(SpcSubgroup::getParamId, param.getId())
                     .eq(SpcSubgroup::getIsDeleted, 0));
             if (existing == 0) {
-                saveInternal(param, matched.stream().map(FaiInspectionItem::getActualValue).collect(Collectors.toList()), "首件自动导入", faiRecordId, fai, loginUser);
+                saveInternal(param, matched.stream().map(FaiInspectionItem::getActualValue).collect(Collectors.toList()), "首件自动导入", faiRecordId, fai, null, null, loginUser);
             }
             imported = true;
         }
@@ -176,7 +178,8 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
     }
 
     private SpcSubgroupResponse saveInternal(SpcParameter param, List<BigDecimal> values,
-                                             String sourceType, Long faiRecordId, FaiInspectionRecord fai, LoginUser loginUser) {
+                                             String sourceType, Long faiRecordId, FaiInspectionRecord fai,
+                                             String itemType, String itemCode, LoginUser loginUser) {
         BigDecimal mean = mean(values);
         BigDecimal range = range(values);
         BigDecimal std = stdDev(values, mean);
@@ -189,13 +192,26 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         sub.setMeanValue(mean);
         sub.setRangeValue(range);
         sub.setStdDev(std);
-        sub.setSampleTime(LocalDateTime.now());
+        sub.setSampleTime(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
         sub.setSourceType(sourceType);
         sub.setFaiRecordId(faiRecordId);
         sub.setWorkOrderNo(fai == null ? null : fai.getWorkOrderNo());
         sub.setBatchNo(fai == null ? null : fai.getBatchNo());
-        sub.setMaterialCode(fai == null ? null : fai.getMaterialCode());
-        sub.setMaterialName(fai == null ? null : fai.getMaterialName());
+        // 首件自动导入时未显式传分类，此处从首件记录继承，避免 SPC 子组丢失产品/物料归属，
+        // 导致控制图按分类筛选时查不到由首件带入的数据。
+        String finalItemType = itemType != null ? itemType : (fai == null ? null : fai.getItemType());
+        String finalItemCode = itemCode != null ? itemCode : (fai == null ? null : fai.getItemCode());
+        sub.setItemType(finalItemType);
+        sub.setItemCode(finalItemCode);
+        // 冗余兼容列（旧报表按 materialCode/materialName 读取）：
+        // 名称统一优先取首件的 itemName，产品场景才不会回落成物料名称。
+        String faiName = fai == null ? null : (fai.getItemName() != null ? fai.getItemName() : fai.getMaterialName());
+        if ("MATERIAL".equals(finalItemType)) {
+            sub.setMaterialCode(finalItemCode != null ? finalItemCode : (fai == null ? null : fai.getMaterialCode()));
+        } else {
+            sub.setMaterialCode(fai == null ? null : fai.getMaterialCode());
+        }
+        sub.setMaterialName(faiName);
         sub.setProcessCode(fai == null ? null : fai.getProcessCode());
         sub.setParamCode(param.getParamCode());
         sub.setUnit(param.getUnit());
@@ -224,11 +240,16 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         }
 
         long count = subgroupCount(param.getId(), plantCode);
-        if ("已完成".equals(sub.getSubgroupStatus()) && count >= 2) {
-            chartService.recalcControlLimits(param.getId(), plantCode);
-        }
-        if ("已完成".equals(sub.getSubgroupStatus()) && count >= 20) {
-            capabilityService.recalcCapability(param.getId(), plantCode);
+        try {
+            if ("已完成".equals(sub.getSubgroupStatus()) && count >= 2) {
+                chartService.recalcControlLimits(param.getId(), plantCode);
+            }
+            if ("已完成".equals(sub.getSubgroupStatus()) && count >= 20) {
+                capabilityService.recalcCapability(param.getId(), plantCode);
+            }
+        } catch (Exception e) {
+            // 重算失败不应回滚子组保存（recalc 已用 NESTED 事务隔离到保存点）
+            log.error("SPC 重算失败（不影响子组保存）：paramId={}", param.getId(), e);
         }
         return detail(sub.getId());
     }
@@ -237,6 +258,23 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
     public List<SpcSubgroupResponse> list(Long paramId, String plantCode) {
         List<SpcSubgroup> subs = subgroupMapper.selectList(Wrappers.lambdaQuery(SpcSubgroup.class)
                 .eq(SpcSubgroup::getParamId, paramId)
+                .eq(SpcSubgroup::getPlantCode, plantCode)
+                .eq(SpcSubgroup::getIsDeleted, 0)
+                .orderByAsc(SpcSubgroup::getSampleTime, SpcSubgroup::getId));
+        if (subs.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<Long> ids = subs.stream().map(SpcSubgroup::getId).collect(Collectors.toList());
+        Map<Long, List<SpcSample>> bySub = sampleMapper.selectList(Wrappers.lambdaQuery(SpcSample.class)
+                        .in(SpcSample::getSubgroupId, ids).eq(SpcSample::getIsDeleted, 0))
+                .stream().collect(Collectors.groupingBy(SpcSample::getSubgroupId, LinkedHashMap::new, Collectors.toList()));
+        return subs.stream().map(s -> toResponse(s, bySub.get(s.getId()))).collect(Collectors.toList());
+    }
+
+    @Override
+    public List<SpcSubgroupResponse> listByFai(Long faiRecordId, String plantCode) {
+        List<SpcSubgroup> subs = subgroupMapper.selectList(Wrappers.lambdaQuery(SpcSubgroup.class)
+                .eq(SpcSubgroup::getFaiRecordId, faiRecordId)
                 .eq(SpcSubgroup::getPlantCode, plantCode)
                 .eq(SpcSubgroup::getIsDeleted, 0)
                 .orderByAsc(SpcSubgroup::getSampleTime, SpcSubgroup::getId));
@@ -275,11 +313,16 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         subgroupMapper.deleteById(id);
 
         long count = subgroupCount(paramId, plantCode);
-        chartService.recalcControlLimits(paramId, plantCode);
-        if (count >= 20) {
-            capabilityService.recalcCapability(paramId, plantCode);
-        } else {
-            capabilityService.clear(paramId, plantCode);
+        try {
+            chartService.recalcControlLimits(paramId, plantCode);
+            if (count >= 20) {
+                capabilityService.recalcCapability(paramId, plantCode);
+            } else {
+                capabilityService.clear(paramId, plantCode);
+            }
+        } catch (Exception e) {
+            // 重算失败不应回滚子组删除（recalc 已用 NESTED 事务隔离到保存点）
+            log.error("SPC 重算失败（不影响子组删除）：paramId={}, subgroupId={}", paramId, id, e);
         }
     }
 
@@ -313,6 +356,7 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         if (!"待补样本".equals(subgroup.getSubgroupStatus()) || !"首件自动导入".equals(subgroup.getSourceType()))
             throw new BusinessException(ResultCode.BAD_REQUEST, "仅可补录首件创建的待补样本子组");
         SpcParameter param = parameterMapper.selectById(subgroup.getParamId());
+        if (param == null) throw new BusinessException(ResultCode.NOT_FOUND, "SPC参数不存在");
         List<BigDecimal> values = dto == null ? null : dto.getSampleValues();
         if (values == null || values.isEmpty() || values.stream().anyMatch(Objects::isNull))
             throw new BusinessException(ResultCode.BAD_REQUEST, "请录入待补的样本值");
@@ -338,8 +382,13 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         subgroup.setUpdatedBy(loginUser.getAccount()); subgroupMapper.updateById(subgroup);
         if ("已完成".equals(subgroup.getSubgroupStatus())) {
             long count = subgroupCount(param.getId(), subgroup.getPlantCode());
-            if (count >= 2) chartService.recalcControlLimits(param.getId(), subgroup.getPlantCode());
-            if (count >= 20) capabilityService.recalcCapability(param.getId(), subgroup.getPlantCode());
+            try {
+                if (count >= 2) chartService.recalcControlLimits(param.getId(), subgroup.getPlantCode());
+                if (count >= 20) capabilityService.recalcCapability(param.getId(), subgroup.getPlantCode());
+            } catch (Exception e) {
+                // 重算失败不应回滚样本补录（recalc 已用 NESTED 事务隔离到保存点）
+                log.error("SPC 重算失败（不影响样本补录）：paramId={}, subgroupId={}", param.getId(), subgroupId, e);
+            }
         }
         return detail(subgroupId);
     }
@@ -348,7 +397,7 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         if (fai == null) return null;
         FaiInspectionItem item = faiItemMapper.selectOne(Wrappers.lambdaQuery(FaiInspectionItem.class)
                 .eq(FaiInspectionItem::getFaiRecordId, fai.getId()).isNotNull(FaiInspectionItem::getStandardItemId)
-                .eq(FaiInspectionItem::getIsDeleted, 0).last("LIMIT 1"));
+                .eq(FaiInspectionItem::getIsDeleted, 0).last(LIMIT_ONE));
         if (item == null) return null;
         FaiInspectionStandardItem standardItem = faiStandardItemMapper.selectById(item.getStandardItemId());
         if (standardItem == null) return null;
@@ -357,7 +406,7 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
     }
 
     private String genSubgroupNo(SpcParameter param, String plantCode) {
-        String ymd = LocalDate.now().format(YMD);
+        String ymd = LocalDate.now(ZoneId.of("Asia/Shanghai")).format(YMD);
         long today = subgroupMapper.selectCount(Wrappers.lambdaQuery(SpcSubgroup.class)
                 .eq(SpcSubgroup::getParamId, param.getId())
                 .eq(SpcSubgroup::getPlantCode, plantCode)
@@ -388,7 +437,7 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
             return d * d;
         }).sum();
         double stdD = Math.sqrt(sumSq / (n - 1));
-        return new BigDecimal(stdD).setScale(SCALE, RoundingMode.HALF_UP);
+        return BigDecimal.valueOf(stdD).setScale(SCALE, RoundingMode.HALF_UP);
     }
 
     private SpcSubgroupResponse toResponse(SpcSubgroup sub, List<SpcSample> samples) {
@@ -407,6 +456,8 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         r.setBatchNo(sub.getBatchNo());
         r.setMaterialCode(sub.getMaterialCode());
         r.setMaterialName(sub.getMaterialName());
+        r.setItemType(sub.getItemType());
+        r.setItemCode(sub.getItemCode());
         r.setProcessCode(sub.getProcessCode());
         r.setSubgroupStatus(sub.getSubgroupStatus());
         r.setPlantCode(sub.getPlantCode());

@@ -58,13 +58,29 @@ public class FaiStandardServiceImpl implements FaiStandardService {
     }
 
     @Override
+    public List<FaiStandardResponse> listByItemType(String plantCode, String itemType) {
+        LambdaQueryWrapper<FaiInspectionStandard> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(FaiInspectionStandard::getPlantCode, plantCode)
+                .eq(StringUtils.hasText(itemType), FaiInspectionStandard::getItemType, itemType)
+                .orderByDesc(FaiInspectionStandard::getCreatedAt);
+        List<FaiInspectionStandard> standards = standardMapper.selectList(wrapper);
+        return standards.stream().map(this::toResponse).collect(Collectors.toList());
+    }
+
+    @Override
     public FaiStandardResponse latestActive(String materialCode, String processName, String plantCode) {
-        if (!StringUtils.hasText(materialCode) || !StringUtils.hasText(processName)) {
+        return latestActive(materialCode, null, processName, plantCode);
+    }
+
+    @Override
+    public FaiStandardResponse latestActive(String itemCode, String itemType, String processName, String plantCode) {
+        if (!StringUtils.hasText(itemCode) || !StringUtils.hasText(processName)) {
             return null;
         }
         LambdaQueryWrapper<FaiInspectionStandard> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(FaiInspectionStandard::getPlantCode, plantCode)
-                .eq(FaiInspectionStandard::getMaterialCode, materialCode)
+                .eq(FaiInspectionStandard::getItemCode, itemCode)
+                .eq(StringUtils.hasText(itemType), FaiInspectionStandard::getItemType, itemType)
                 .eq(FaiInspectionStandard::getProcessName, processName)
                 .eq(FaiInspectionStandard::getIsActive, "是")
                 .orderByDesc(FaiInspectionStandard::getStdVersion)
@@ -99,7 +115,7 @@ public class FaiStandardServiceImpl implements FaiStandardService {
         standard.setPlantName(plantName);
         standard.setCreatedBy(loginUser.getRealName());
         standard.setUpdatedBy(loginUser.getRealName());
-        standard.setStdVersion(nextVersion(req.getMaterialCode(), req.getProcessName(), plantCode));
+        standard.setStdVersion(nextVersion(req.getMaterialCode(), req.getItemType(), req.getItemCode(), req.getProcessName(), plantCode));
         if (!StringUtils.hasText(req.getIsActive())) {
             standard.setIsActive("是");
         }
@@ -107,9 +123,9 @@ public class FaiStandardServiceImpl implements FaiStandardService {
 
         saveItems(standard.getId(), req.getItems(), plantCode, plantName, loginUser.getRealName());
 
-        // 仅允许一个激活标准：新标准激活时关闭同 物料+工序 的其它激活标准
+        // 仅允许一个激活标准：新标准激活时关闭同 物料+工序+分类 的其它激活标准
         if ("是".equals(standard.getIsActive())) {
-            deactivateOthers(standard.getId(), req.getMaterialCode(), req.getProcessName(), plantCode, loginUser.getRealName());
+            deactivateOthers(standard.getId(), req.getMaterialCode(), req.getItemType(), req.getItemCode(), req.getProcessName(), plantCode, loginUser.getRealName());
         }
         return standard.getId();
     }
@@ -140,7 +156,7 @@ public class FaiStandardServiceImpl implements FaiStandardService {
         saveItems(id, req.getItems(), plantCode, standard.getPlantName(), loginUser.getRealName());
 
         if ("是".equals(standard.getIsActive())) {
-            deactivateOthers(id, req.getMaterialCode(), req.getProcessName(), plantCode, loginUser.getRealName());
+            deactivateOthers(id, req.getMaterialCode(), req.getItemType(), req.getItemCode(), req.getProcessName(), plantCode, loginUser.getRealName());
         }
     }
 
@@ -198,10 +214,12 @@ public class FaiStandardServiceImpl implements FaiStandardService {
         }
     }
 
-    private int nextVersion(String materialCode, String processName, String plantCode) {
+    private int nextVersion(String materialCode, String itemType, String itemCode, String processName, String plantCode) {
         LambdaQueryWrapper<FaiInspectionStandard> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(FaiInspectionStandard::getPlantCode, plantCode)
                 .eq(FaiInspectionStandard::getMaterialCode, materialCode)
+                .eq(StringUtils.hasText(itemType), FaiInspectionStandard::getItemType, itemType)
+                .eq(StringUtils.hasText(itemCode), FaiInspectionStandard::getItemCode, itemCode)
                 .eq(FaiInspectionStandard::getProcessName, processName)
                 .select(FaiInspectionStandard::getStdVersion)
                 .orderByDesc(FaiInspectionStandard::getStdVersion)
@@ -210,10 +228,12 @@ public class FaiStandardServiceImpl implements FaiStandardService {
         return latest == null ? 1 : (latest.getStdVersion() == null ? 1 : latest.getStdVersion() + 1);
     }
 
-    private void deactivateOthers(Long selfId, String materialCode, String processName, String plantCode, String operator) {
+    private void deactivateOthers(Long selfId, String materialCode, String itemType, String itemCode, String processName, String plantCode, String operator) {
         LambdaUpdateWrapper<FaiInspectionStandard> wrapper = new LambdaUpdateWrapper<>();
         wrapper.eq(FaiInspectionStandard::getPlantCode, plantCode)
                 .eq(FaiInspectionStandard::getMaterialCode, materialCode)
+                .eq(StringUtils.hasText(itemType), FaiInspectionStandard::getItemType, itemType)
+                .eq(StringUtils.hasText(itemCode), FaiInspectionStandard::getItemCode, itemCode)
                 .eq(FaiInspectionStandard::getProcessName, processName)
                 .eq(FaiInspectionStandard::getIsActive, "是")
                 .ne(FaiInspectionStandard::getId, selfId)
@@ -236,9 +256,8 @@ public class FaiStandardServiceImpl implements FaiStandardService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "标准至少包含一项参数");
         }
         for (FaiStandardItemRequest it : req.getItems()) {
-            if (!StringUtils.hasText(it.getParamName())) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "参数名称不能为空");
-            }
+            // 注意：paramName 不在此处校验空值。下方会强制从 SPC 参数回带 paramName，
+            // 若此处先校验会因前端未传 paramName（仅传 spcParameterId）而误报“参数名称不能为空”。
             if (!StringUtils.hasText(it.getParamCategory())) {
                 throw new BusinessException(ResultCode.BAD_REQUEST, "参数类别(AQL/关键尺寸/性能参数)不能为空");
             }

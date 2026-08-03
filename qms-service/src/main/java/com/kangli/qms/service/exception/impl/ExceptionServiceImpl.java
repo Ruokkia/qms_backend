@@ -7,6 +7,7 @@ import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.LoginUser;
 import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.common.PageResult;
+import org.springframework.dao.DuplicateKeyException;
 import com.kangli.qms.common.ResultCode;
 import com.kangli.qms.service.exception.dto.ExceptionCloseDTO;
 import com.kangli.qms.service.exception.dto.ExceptionUpdateDTO;
@@ -27,6 +28,7 @@ import com.kangli.qms.domain.exception.mapper.EscalationMapper;
 import com.kangli.qms.domain.exception.mapper.Exception8dMapper;
 import com.kangli.qms.domain.exception.mapper.ExceptionOrderMapper;
 import com.kangli.qms.domain.exception.mapper.ImprovementActionMapper;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionRecordMapper;
 import com.kangli.qms.domain.incoming.mapper.MaterialInspectionMapper;
 import com.kangli.qms.domain.exception.mapper.RectificationPlanMapper;
 import com.kangli.qms.domain.supplier.mapper.SupplierMapper;
@@ -46,6 +48,8 @@ import com.kangli.qms.domain.exception.vo.QualityExceptionDecisionVO;
 import com.kangli.qms.domain.exception.vo.QualityRuleCatalogVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -54,12 +58,14 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -70,6 +76,14 @@ import java.util.stream.Collectors;
 @Service
 public class ExceptionServiceImpl implements ExceptionService {
 
+    private static final String BUSINESS_TYPE_EXCEPTION = "EXCEPTION_ORDER";
+    private static final String TABLE_NAME_EXCEPTION = "exception_order";
+    private static final String ACTION_UPDATE = "UPDATE";
+
+    @Lazy
+    @Autowired
+    private ExceptionServiceImpl self;
+
     private final ExceptionOrderMapper exceptionOrderMapper;
     private final ImprovementActionMapper improvementActionMapper;
     private final VerificationRecordMapper verificationRecordMapper;
@@ -78,6 +92,7 @@ public class ExceptionServiceImpl implements ExceptionService {
     private final Exception8dMapper exception8dMapper;
     private final NotificationService notificationService;
     private final MaterialInspectionMapper materialInspectionMapper;
+    private final FaiInspectionRecordMapper faiInspectionRecordMapper;
     private final SysUserMapper sysUserMapper;
     private final AuditLogMapper auditLogMapper;
     private final AuditLogService auditLogService;
@@ -92,6 +107,7 @@ public class ExceptionServiceImpl implements ExceptionService {
                                  Exception8dMapper exception8dMapper,
                                  NotificationService notificationService,
                                  MaterialInspectionMapper materialInspectionMapper,
+                                 FaiInspectionRecordMapper faiInspectionRecordMapper,
                                  SysUserMapper sysUserMapper,
                                  AuditLogMapper auditLogMapper,
                                  AuditLogService auditLogService,
@@ -105,6 +121,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         this.exception8dMapper = exception8dMapper;
         this.notificationService = notificationService;
         this.materialInspectionMapper = materialInspectionMapper;
+        this.faiInspectionRecordMapper = faiInspectionRecordMapper;
         this.sysUserMapper = sysUserMapper;
         this.auditLogMapper = auditLogMapper;
         this.auditLogService = auditLogService;
@@ -238,7 +255,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         // 通知数
         LambdaQueryWrapper<com.kangli.qms.domain.notification.entity.Notification> notificationWrapper = new LambdaQueryWrapper<>();
         notificationWrapper.eq(com.kangli.qms.domain.notification.entity.Notification::getBusinessId, id)
-                .eq(com.kangli.qms.domain.notification.entity.Notification::getBusinessType, "EXCEPTION_ORDER");
+                .eq(com.kangli.qms.domain.notification.entity.Notification::getBusinessType, BUSINESS_TYPE_EXCEPTION);
         vo.setNotificationCount((int) notificationService.count(notificationWrapper));
 
         // 关联来料检验记录
@@ -270,11 +287,11 @@ public class ExceptionServiceImpl implements ExceptionService {
         if (order.getCapaStatus() == null) {
             order.setCapaStatus("待发起");
         }
-        order.setExceptionNo(generateExceptionNo(plantCode));
+        order.setExceptionNo(generateExceptionNo());
         order.setCreatedBy(loginUser.getRealName());
         order.setUpdatedBy(loginUser.getRealName());
 
-        exceptionOrderMapper.insert(order);
+        insertExceptionWithRetry(order);
 
         // 若建单时直接携带 8D 流程且已进入「进行中」，同步自动建 D1 报告
         if (processIncludes8D(order.getProcessType()) && "进行中".equals(order.getCapaStatus())) {
@@ -317,7 +334,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setDefectQty(inspection.getUnqualifiedQty());
         order.setTotalQty(inspection.getSubmittedQty());
         order.setDeadline(LocalDate.now().plusDays(decision.getDeadlineDays()));
-        order.setResponseDeadline(LocalDateTime.now().plusHours(decision.getResponseHours()));
+        order.setResponseDeadline(LocalDateTime.now(ZoneId.of("Asia/Shanghai")).plusHours(decision.getResponseHours()));
         order.setRuleReason(decision.getRuleReason());
         order.setNotificationLevel(decision.getNotificationLevel());
         order.setRepeatCount30Days(repeatCount30Days);
@@ -325,7 +342,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setProblemFingerprint(buildProblemFingerprint(plantCode, inspection));
         order.setHandlingMethod(inspection.getHandlingMethod());
         order.setHandlerId(loginUser.getUserId());
-        order.setExceptionNo(generateExceptionNo(plantCode));
+        order.setExceptionNo(generateExceptionNo());
         order.setPlantCode(plantCode);
         order.setPlantName(StringUtils.hasText(inspection.getPlantName())
                 ? inspection.getPlantName() : loginUser.getPlantCode().getChineseName());
@@ -343,7 +360,7 @@ public class ExceptionServiceImpl implements ExceptionService {
             }
         }
 
-        exceptionOrderMapper.insert(order);
+        insertExceptionWithRetry(order);
 
         if ("8D".equals(decision.getProcessType()) || "BOTH".equals(decision.getProcessType())) {
             initializeEightD(order, loginUser);
@@ -351,12 +368,112 @@ public class ExceptionServiceImpl implements ExceptionService {
 
         sendExceptionCreatedNotifications(order, loginUser);
         createAutomaticEscalationIfNeeded(order, inspection, loginUser, repeatCount90Days);
-        auditLogService.record("exception_order", order.getId(), "CREATE", null, order,
+        auditLogService.record(TABLE_NAME_EXCEPTION, order.getId(), "CREATE", null, order,
                 "来料不良自动触发；" + decision.getRuleReason());
 
         log.info("来料不合格自动建异常单：materialInspectionId={}, exceptionNo={}, severity={}, processType={}",
                 inspection.getId(), order.getExceptionNo(), order.getSeverity(), order.getProcessType());
         return order;
+    }
+
+    /**
+     * 插入异常单并兜底单号并发重号：若唯一索引 uq_exo_no 冲突（并发生成相同单号），
+     * 自动重新生成单号并重试，最多 3 次。对应缺陷 L15。
+     */
+    private void insertExceptionWithRetry(ExceptionOrder order) {
+        int attempts = 0;
+        while (true) {
+            try {
+                exceptionOrderMapper.insert(order);
+                return;
+            } catch (DuplicateKeyException e) {
+                if (++attempts >= 3) {
+                    throw e;
+                }
+                order.setExceptionNo(generateExceptionNo());
+            }
+        }
+    }
+
+    /**
+     * 根据首件检验不合格记录自动生成异常单（对应缺陷 L30）。
+     * 仅在尚未关联异常单时创建，避免 autoJudge 多次触发产生重复工单。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    @Override
+    public ExceptionOrder createFromFai(FaiInspectionRecord record, LoginUser loginUser) {
+        ExceptionOrder existing = exceptionOrderMapper.selectOne(new LambdaQueryWrapper<ExceptionOrder>()
+                .eq(ExceptionOrder::getSourceId, record.getId())
+                .eq(ExceptionOrder::getSourceType, "首件不合格")
+                .eq(ExceptionOrder::getIsDeleted, 0));
+        if (existing != null) {
+            return existing;
+        }
+        String plantCode = StringUtils.hasText(record.getPlantCode())
+                ? record.getPlantCode() : loginUser.getPlantCode().name();
+
+        // 同一产品、同一厂区近30天首件不合格重复次数（用于严重等级评估）
+        int repeatCount30Days = countRecentFaiUnqualified(
+                plantCode, record, LocalDate.now().minusDays(29), LocalDate.now());
+        QualityExceptionDecisionVO decision = qualityRuleEvaluator.evaluateFai(record, repeatCount30Days);
+
+        ExceptionOrder order = new ExceptionOrder();
+        order.setSourceType("首件不合格");
+        order.setSourceId(record.getId());
+        order.setPlantCode(plantCode);
+        order.setPlantName(StringUtils.hasText(record.getPlantName())
+                ? record.getPlantName() : loginUser.getPlantCode().getChineseName());
+        order.setStatus("待整改");
+        order.setCapaStatus("待发起");
+        order.setSeverity(decision.getSeverity());
+        order.setProcessType(decision.getProcessType());
+        order.setNotificationLevel(decision.getNotificationLevel());
+        order.setDeadline(LocalDate.now().plusDays(decision.getDeadlineDays()));
+        order.setResponseDeadline(LocalDateTime.now(ZoneId.of("Asia/Shanghai")).plusHours(decision.getResponseHours()));
+        order.setRuleReason(decision.getRuleReason());
+        order.setRepeatCount30Days(repeatCount30Days);
+        order.setExceptionNo(generateExceptionNo());
+        order.setMaterialCode(record.getMaterialCode());
+        order.setDefectDesc("首件检验不合格（FAI 记录 " + record.getFaiNo() + "），需发起整改");
+        order.setCreatedBy(loginUser.getRealName());
+        order.setUpdatedBy(loginUser.getRealName());
+        insertExceptionWithRetry(order);
+
+        if ("8D".equals(decision.getProcessType()) || "BOTH".equals(decision.getProcessType())) {
+            initializeEightD(order, loginUser);
+        }
+        sendExceptionCreatedNotifications(order, loginUser);
+        auditLogService.record(TABLE_NAME_EXCEPTION, order.getId(), "CREATE", null, order,
+                "首件不合格自动触发；" + decision.getRuleReason());
+
+        log.info("首件不合格自动建异常单：faiId={}, exceptionNo={}, severity={}, processType={}",
+                record.getId(), order.getExceptionNo(), order.getSeverity(), order.getProcessType());
+        return order;
+    }
+
+    /**
+     * 统计同一厂区、同一产品/物料（按 itemType 取值）+ 同一工序在指定日期窗口内的首件不合格记录数（含当前记录，最小为 1）。
+     * 与规则文案「同一产品、同一工序30天内重复不合格」的口径一致。
+     */
+    private int countRecentFaiUnqualified(String plantCode, FaiInspectionRecord record,
+                                          LocalDate startDate, LocalDate endDate) {
+        String itemCode = "PRODUCT".equals(record.getItemType()) ? record.getItemCode() : record.getMaterialCode();
+        if (!StringUtils.hasText(itemCode)) {
+            return 1;
+        }
+        LocalDateTime start = startDate.atStartOfDay();
+        LocalDateTime end = endDate.atTime(23, 59, 59);
+        LambdaQueryWrapper<FaiInspectionRecord> q = new LambdaQueryWrapper<FaiInspectionRecord>()
+                .eq(FaiInspectionRecord::getInspectionResult, "不合格")
+                .eq(FaiInspectionRecord::getProcessCode, record.getProcessCode())
+                .between(FaiInspectionRecord::getCreatedAt, start, end);
+        if ("PRODUCT".equals(record.getItemType())) {
+            q.eq(FaiInspectionRecord::getItemCode, itemCode);
+        } else {
+            q.eq(FaiInspectionRecord::getMaterialCode, itemCode);
+        }
+        Long count = faiInspectionRecordMapper.selectCount(q);
+        return Math.max(1, count == null ? 1 : count.intValue());
     }
 
     // ===== 更新 =====
@@ -395,8 +512,6 @@ public class ExceptionServiceImpl implements ExceptionService {
         if (dto.getTotalQty() != null) target.setTotalQty(dto.getTotalQty());
         if (dto.getHandlerId() != null) target.setHandlerId(dto.getHandlerId());
         if (dto.getReviewerId() != null) target.setReviewerId(dto.getReviewerId());
-        if (dto.getCapaStatus() != null) target.setCapaStatus(dto.getCapaStatus());
-        if (dto.getProcessType() != null) target.setProcessType(dto.getProcessType());
         if (dto.getDeadline() != null) target.setDeadline(dto.getDeadline());
         if (dto.getRemark() != null) target.setRemark(dto.getRemark());
         if (dto.getSignatureUser() != null) target.setSignatureUser(dto.getSignatureUser());
@@ -447,7 +562,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         ensureEightDInitialized(existing, loginUser);
 
         // 审计：记录发起整改流程操作
-        auditLogService.record("exception_order", id, "UPDATE", existing, update, "发起整改流程：" + processType);
+        auditLogService.record(TABLE_NAME_EXCEPTION, id, ACTION_UPDATE, existing, update, "发起整改流程：" + processType);
 
         log.info("发起整改流程：exceptionId={}, processType={}", id, processType);
         return exceptionOrderMapper.selectById(id);
@@ -542,7 +657,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         ExceptionOrder update = new ExceptionOrder();
         update.setId(id);
         update.setStatus("已闭环");
-        update.setClosedAt(LocalDateTime.now());
+        update.setClosedAt(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
         update.setCapaStatus("已完成");
         update.setRemark(order.getRemark() != null ? order.getRemark() + "\n闭环原因：" + dto.getCloseReason() : "闭环原因：" + dto.getCloseReason());
         LoginUser loginUser = getCurrentLoginUser();
@@ -551,7 +666,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         exceptionOrderMapper.updateById(update);
 
         // 审计：记录线上闭环操作
-        auditLogService.record("exception_order", id, "UPDATE", order, update, "线上闭环：" + dto.getCloseReason());
+        auditLogService.record(TABLE_NAME_EXCEPTION, id, ACTION_UPDATE, order, update, "线上闭环：" + dto.getCloseReason());
 
         // 发送状态变更通知
         sendExceptionStatusChangedNotification(order, loginUser, "已闭环");
@@ -745,7 +860,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         }
 
         LoginUser loginUser = getCurrentLoginUser();
-        return createFromMaterialInspection(inspection, loginUser);
+        return self.createFromMaterialInspection(inspection, loginUser);
     }
 
     // ===== 重置异常单为最初状态 =====
@@ -793,7 +908,7 @@ public class ExceptionServiceImpl implements ExceptionService {
                 .set(ExceptionOrder::getUpdatedBy, loginUser.getRealName()));
 
         // 审计
-        auditLogService.record("exception_order", id, "UPDATE", order,
+        auditLogService.record(TABLE_NAME_EXCEPTION, id, ACTION_UPDATE, order,
                 "status=待整改 capaStatus=待发起 processType=NULL closedAt=NULL", "重置为最初状态（手动测试）");
 
         log.info("异常单 {} 已重置为最初状态，操作人：{}", id, loginUser.getRealName());
@@ -810,7 +925,7 @@ public class ExceptionServiceImpl implements ExceptionService {
 
         // 异常单自身
         result.addAll(auditLogMapper.selectList(new LambdaQueryWrapper<AuditLog>()
-                .eq(AuditLog::getTableName, "exception_order")
+                .eq(AuditLog::getTableName, TABLE_NAME_EXCEPTION)
                 .eq(AuditLog::getRecordId, id)));
 
         // 改善措施
@@ -953,7 +1068,7 @@ public class ExceptionServiceImpl implements ExceptionService {
 
             List<Long> recipientIds = recipients.stream()
                     .map(SysUser::getId)
-                    .filter(id -> id != null)
+                    .filter(Objects::nonNull)
                     .distinct()
                     .collect(Collectors.toCollection(ArrayList::new));
             if (loginUser.getUserId() != null && !recipientIds.contains(loginUser.getUserId())) {
@@ -970,7 +1085,7 @@ public class ExceptionServiceImpl implements ExceptionService {
                 dto.setContent("判定：" + order.getRuleReason()
                         + "；系统已发起" + order.getProcessType()
                         + "；整改截止：" + order.getDeadline());
-                dto.setBusinessType("EXCEPTION_ORDER");
+                dto.setBusinessType(BUSINESS_TYPE_EXCEPTION);
                 dto.setBusinessId(order.getId());
                 dto.setPlantCode(order.getPlantCode());
                 dto.setCreatedBy(loginUser.getRealName());
@@ -1064,7 +1179,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         historyWrapper.eq(Escalation::getPlantCode, order.getPlantCode())
                 .eq(Escalation::getSupplierCode, inspection.getSupplierCode())
                 .eq(Escalation::getMaterialCode, inspection.getMaterialCode())
-                .ge(Escalation::getCreatedAt, LocalDateTime.now().minusDays(180));
+                .ge(Escalation::getCreatedAt, LocalDateTime.now(ZoneId.of("Asia/Shanghai")).minusDays(180));
         long previousCount = escalationMapper.selectCount(historyWrapper);
 
         Escalation escalation = new Escalation();
@@ -1075,9 +1190,15 @@ public class ExceptionServiceImpl implements ExceptionService {
         escalation.setEscalationReason("同一供应商、同一物料90天内不合格"
                 + repeatCount90Days + "批，达到自动升级阈值3批");
         escalation.setRelatedExceptionIds(String.valueOf(order.getId()));
-        escalation.setEscalationAction(previousCount == 0
-                ? "加严检验、提高审核频次、专项8D"
-                : previousCount == 1 ? "建议降低采购份额20%" : "建议暂停新增采购或暂停供货");
+        String escalationActionStr;
+        if (previousCount == 0) {
+            escalationActionStr = "加严检验、提高审核频次、专项8D";
+        } else if (previousCount == 1) {
+            escalationActionStr = "建议降低采购份额20%";
+        } else {
+            escalationActionStr = "建议暂停新增采购或暂停供货";
+        }
+        escalation.setEscalationAction(escalationActionStr);
         escalation.setStatus("PENDING_REVIEW");
         escalation.setPlantCode(order.getPlantCode());
         escalation.setPlantName(order.getPlantName());
@@ -1127,7 +1248,7 @@ public class ExceptionServiceImpl implements ExceptionService {
                     managerNotification.setLevel("\u63d0\u9192");
                     managerNotification.setTitle("\u5f02\u5e38\u5355" + order.getExceptionNo() + " \u5df2\u95ed\u73af");
                     managerNotification.setContent("\u5f02\u5e38\u5355\u5df2\u5b8c\u6210\u95ed\u73af\uff0c\u64cd\u4f5c\u4eba\uff1a" + loginUser.getRealName());
-                    managerNotification.setBusinessType("EXCEPTION_ORDER");
+                    managerNotification.setBusinessType(BUSINESS_TYPE_EXCEPTION);
                     managerNotification.setBusinessId(order.getId());
                     managerNotification.setPlantCode(order.getPlantCode());
                     managerNotification.setCreatedBy(loginUser.getRealName());
@@ -1139,7 +1260,7 @@ public class ExceptionServiceImpl implements ExceptionService {
             dto.setType("EXCEPTION_STATUS_CHANGED");
             dto.setTitle("异常单 " + order.getExceptionNo() + " 状态变更");
             dto.setContent("新状态：" + newStatus);
-            dto.setBusinessType("EXCEPTION_ORDER");
+            dto.setBusinessType(BUSINESS_TYPE_EXCEPTION);
             dto.setBusinessId(order.getId());
             dto.setPlantCode(order.getPlantCode());
             dto.setCreatedBy(loginUser.getRealName());
@@ -1152,7 +1273,7 @@ public class ExceptionServiceImpl implements ExceptionService {
     /**
      * 生成异常单号：EX-YYYYMMDD-NNN。
      */
-    private String generateExceptionNo(String plantCode) {
+    private String generateExceptionNo() {
         String datePart = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         LambdaQueryWrapper<ExceptionOrder> wrapper = new LambdaQueryWrapper<>();
         wrapper.likeRight(ExceptionOrder::getExceptionNo, "EX-" + datePart + "-")

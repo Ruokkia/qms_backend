@@ -27,6 +27,9 @@ public class FaiChangeTriggerQuery implements Serializable {
     @ApiModelProperty(value = "物料代码")
     private String materialCode;
 
+    @ApiModelProperty(value = "条目类型：PRODUCT(产品) / MATERIAL(物料)")
+    private String itemType;
+
     @ApiModelProperty(value = "批次号")
     private String batchNo;
 

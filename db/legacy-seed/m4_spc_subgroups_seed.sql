@@ -14,6 +14,7 @@ DECLARE
   v NUMERIC(18,6);
   sub_no TEXT;
   spread NUMERIC(18,6);
+  demo_code TEXT;
 BEGIN
   FOR p IN
     SELECT id, param_code, plant_code, plant_name, target_value,
@@ -21,16 +22,19 @@ BEGIN
     FROM qms.spc_parameter WHERE is_deleted = 0
   LOOP
     spread := (p.upper_spec_limit - p.lower_spec_limit) / 6.0;
+    -- 演示用产品代码：随厂区+参数生成，使控制图可按代码关联/模糊搜索命中
+    demo_code := 'DEMO-' || p.plant_code || '-' || p.param_code;
     FOR g IN 1..25 LOOP
       sub_no := 'SG-' || p.plant_code || '-' || p.param_code || '-'
                 || to_char(now(), 'yyyyMMdd') || '-' || lpad(g::text, 4, '0');
       INSERT INTO qms.spc_subgroup
         (param_id, subgroup_no, sample_count, mean_value, range_value, std_dev,
-         sample_time, source_type, plant_code, plant_name, created_by, updated_by)
+         sample_time, source_type, plant_code, plant_name, item_type, item_code,
+         created_by, updated_by)
       VALUES
         (p.id, sub_no, p.subgroup_size, 0, 0, 0,
          now() - (25 - g) * interval '1 hour', '手动录入',
-         p.plant_code, p.plant_name, 'seed', 'seed')
+         p.plant_code, p.plant_name, 'PRODUCT', demo_code, 'seed', 'seed')
       RETURNING id INTO sid;
 
       FOR s IN 1..p.subgroup_size LOOP

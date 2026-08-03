@@ -1,5 +1,6 @@
 package com.kangli.qms.service.exception.impl;
 
+import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
 import com.kangli.qms.domain.incoming.entity.MaterialInspection;
 import com.kangli.qms.domain.exception.vo.QualityExceptionDecisionVO;
 import com.kangli.qms.domain.exception.vo.QualityRuleCatalogVO;
@@ -51,6 +52,31 @@ public class QualityExceptionRuleEvaluator {
         decision.setDefectRate(defectRate);
         decision.setRepeatCount30Days(repeatCount30Days);
         decision.setRuleReason(String.join("；", reasons));
+        decision.setHandlingMethods(buildHandlingMethods(severe));
+        decision.setRequiredMeasures(buildRequiredMeasures(severe));
+        return decision;
+    }
+
+    /**
+     * 首件检验不合格的严重等级评估。首件记录无供应商/不良率字段，无法复用来料口径，
+     * 故采用「同一产品/工序30天内首件不合格重复次数」作为严重判定依据，与来料重复规则对称。
+     */
+    public QualityExceptionDecisionVO evaluateFai(FaiInspectionRecord record, int repeatCount30Days) {
+        List<String> reasons = new ArrayList<>();
+        if (repeatCount30Days >= REPEAT_SEVERE_COUNT_30_DAYS) {
+            reasons.add("同一产品、同一工序30天内第" + repeatCount30Days + "次首件不合格");
+        }
+        boolean severe = !reasons.isEmpty();
+
+        QualityExceptionDecisionVO decision = new QualityExceptionDecisionVO();
+        decision.setSeverity(severe ? "严重" : "一般");
+        decision.setProcessType(severe ? "8D" : "CAPA");
+        decision.setNotificationLevel(severe ? "严重" : "提醒");
+        decision.setResponseHours(severe ? 24 : 48);
+        decision.setDeadlineDays(severe ? 3 : 7);
+        decision.setRepeatCount30Days(repeatCount30Days);
+        decision.setRuleReason(String.join("；", severe
+                ? reasons : List.of("首件不合格，未命中严重规则，按一般不良处理")));
         decision.setHandlingMethods(buildHandlingMethods(severe));
         decision.setRequiredMeasures(buildRequiredMeasures(severe));
         return decision;

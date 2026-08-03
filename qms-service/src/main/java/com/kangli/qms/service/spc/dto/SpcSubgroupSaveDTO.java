@@ -21,4 +21,8 @@ public class SpcSubgroupSaveDTO implements Serializable {
     private List<BigDecimal> sampleValues;
     /** 来源类型（默认 手动录入） */
     private String sourceType;
+    /** 分类：PRODUCT(产品) / MATERIAL(物料) */
+    private String itemType;
+    /** 产品/物料代码（随 itemType 取值，控制图关联维度） */
+    private String itemCode;
 }

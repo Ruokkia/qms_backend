@@ -1,6 +1,5 @@
 package com.kangli.qms.api.fai;
 
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.LoginUser;
 import com.kangli.qms.common.LoginUserHolder;
@@ -26,7 +25,6 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -78,7 +76,8 @@ public class FaiController {
             @RequestParam(required = false) String triggerType,
             @RequestParam(required = false) String materialCode,
             @RequestParam(required = false) String batchNo,
-            @RequestParam(required = false) String status) {
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String itemType) {
         LoginUser loginUser = getCurrentLoginUser();
         FaiChangeTriggerQuery query = new FaiChangeTriggerQuery();
         query.setPage(page);
@@ -87,6 +86,7 @@ public class FaiController {
         query.setMaterialCode(materialCode);
         query.setBatchNo(batchNo);
         query.setStatus(status);
+        query.setItemType(itemType);
         return R.ok(changeTriggerService.page(query, loginUser.getPlantCode().name()));
     }
 
@@ -113,7 +113,10 @@ public class FaiController {
             @RequestParam(required = false) String faiNo,
             @RequestParam(required = false) String batchNo,
             @RequestParam(required = false) String materialName,
-            @RequestParam(required = false) String inspectionResult) {
+            @RequestParam(required = false) String inspectionResult,
+            @RequestParam(required = false) String signatureStatus,
+            @RequestParam(required = false) Boolean archiveOnly,
+            @RequestParam(required = false) String itemType) {
         LoginUser loginUser = getCurrentLoginUser();
         FaiInspectionQuery query = new FaiInspectionQuery();
         query.setPage(page);
@@ -122,6 +125,9 @@ public class FaiController {
         query.setBatchNo(batchNo);
         query.setMaterialName(materialName);
         query.setInspectionResult(inspectionResult);
+        query.setSignatureStatus(signatureStatus);
+        query.setArchiveOnly(archiveOnly);
+        query.setItemType(itemType);
         return R.ok(inspectionService.page(query, loginUser.getPlantCode().name()));
     }
 
@@ -173,18 +179,29 @@ public class FaiController {
 
     @GetMapping("/standards")
     @ApiOperation(value = "标准模板列表")
-    public R<List<FaiStandardResponse>> listStandards() {
+    public R<List<FaiStandardResponse>> listStandards(
+            @ApiParam(value = "分类：PRODUCT/AMATERIAL，可选") @RequestParam(required = false) String itemType) {
         LoginUser loginUser = getCurrentLoginUser();
-        return R.ok(standardService.list(loginUser.getPlantCode().name()));
+        return R.ok(standardService.listByItemType(loginUser.getPlantCode().name(), itemType));
     }
 
     @GetMapping("/standards/{materialCode}/{processName}")
-    @ApiOperation(value = "查询最新激活标准")
+    @ApiOperation(value = "查询最新激活标准（按物料代码+工序）")
     public R<FaiStandardResponse> latestStandard(
             @ApiParam(value = "物料代码") @PathVariable String materialCode,
             @ApiParam(value = "工序") @PathVariable String processName) {
         LoginUser loginUser = getCurrentLoginUser();
         return R.ok(standardService.latestActive(materialCode, processName, loginUser.getPlantCode().name()));
+    }
+
+    @GetMapping("/standards/item")
+    @ApiOperation(value = "查询最新激活标准（按分类+代码+工序）")
+    public R<FaiStandardResponse> latestStandardByItem(
+            @ApiParam(value = "分类：PRODUCT/AMATERIAL") @RequestParam String itemType,
+            @ApiParam(value = "产品/物料代码") @RequestParam String itemCode,
+            @ApiParam(value = "工序") @RequestParam String processName) {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(standardService.latestActive(itemCode, itemType, processName, loginUser.getPlantCode().name()));
     }
 
     @PostMapping("/standards")

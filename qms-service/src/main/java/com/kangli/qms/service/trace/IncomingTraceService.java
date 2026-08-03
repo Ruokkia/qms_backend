@@ -72,12 +72,12 @@ public class IncomingTraceService {
             Set<String> downVisited = new LinkedHashSet<>();
             root.put("upward", expand(rootBarcode, true, new LinkedHashSet<>(), upVisited, graph));
             root.put("children", expand(rootBarcode, false, new LinkedHashSet<>(), downVisited, graph));
-            return result(root, upVisited.size() + downVisited.size(), direction, 0);
+            return result(root, upVisited.size() + downVisited.size(), direction, 0, graph);
         } else {
             Set<String> visited = new LinkedHashSet<>();
             boolean up = "UP".equals(direction);
             root.put("children", expand(rootBarcode, up, new LinkedHashSet<>(), visited, graph));
-            return result(root, visited.size(), direction, 0);
+            return result(root, visited.size(), direction, 0, graph);
         }
     }
 
@@ -290,27 +290,20 @@ public class IncomingTraceService {
         return loadGraphContext(Collections.singleton(rootBarcode), direction);
     }
 
+    /**
+     * 按追溯方向逐层加载绑定关系，只读取当前根节点可达的关系，避免扫描整个分公司的绑定表。
+     */
     private TraceGraphContext loadGraphContext(Collection<String> rootBarcodes, String direction) {
         String currentPlant = plant();
         TraceGraphContext graph = new TraceGraphContext(currentPlant);
-
-        QueryWrapper<CriticalMaterialBinding> bindingWrapper = new QueryWrapper<>();
-        bindingWrapper.select("product_barcode", "material_barcode", "category")
-                .eq("plant_code", currentPlant);
-        for (CriticalMaterialBinding binding : bindingMapper.selectList(bindingWrapper)) {
-            graph.downstream.computeIfAbsent(binding.getProductBarcode(), key -> new ArrayList<>()).add(binding);
-            graph.upstream.computeIfAbsent(binding.getMaterialBarcode(), key -> new ArrayList<>()).add(binding);
-        }
-
         Set<String> finishedBarcodes = new LinkedHashSet<>();
         Set<String> materialBarcodes = new LinkedHashSet<>();
-        for (String rootBarcode : rootBarcodes) {
-            if ("FULL".equals(direction) || "UP".equals(direction)) {
-                collectReachableBarcodes(rootBarcode, true, graph, finishedBarcodes, materialBarcodes);
-            }
-            if ("FULL".equals(direction) || "DOWN".equals(direction)) {
-                collectReachableBarcodes(rootBarcode, false, graph, finishedBarcodes, materialBarcodes);
-            }
+
+        if ("FULL".equals(direction) || "UP".equals(direction)) {
+            loadBindingLayers(rootBarcodes, true, graph, finishedBarcodes, materialBarcodes);
+        }
+        if ("FULL".equals(direction) || "DOWN".equals(direction)) {
+            loadBindingLayers(rootBarcodes, false, graph, finishedBarcodes, materialBarcodes);
         }
 
         if (!finishedBarcodes.isEmpty()) {
@@ -336,6 +329,41 @@ public class IncomingTraceService {
         return graph;
     }
 
+    private void loadBindingLayers(Collection<String> rootBarcodes, boolean up,
+                                   TraceGraphContext graph,
+                                   Set<String> finishedBarcodes,
+                                   Set<String> materialBarcodes) {
+        Set<String> frontier = new LinkedHashSet<>(rootBarcodes);
+        Set<String> queried = new HashSet<>();
+        String lookupColumn = up ? "material_barcode" : "product_barcode";
+
+        while (!frontier.isEmpty()) {
+            frontier.removeAll(queried);
+            if (frontier.isEmpty()) break;
+
+            QueryWrapper<CriticalMaterialBinding> wrapper = new QueryWrapper<>();
+            wrapper.select("product_barcode", "material_barcode", "category")
+                    .eq("plant_code", graph.plantCode)
+                    .in(lookupColumn, frontier);
+            List<CriticalMaterialBinding> bindings = bindingMapper.selectList(wrapper);
+            queried.addAll(frontier);
+
+            Set<String> next = new LinkedHashSet<>();
+            for (CriticalMaterialBinding binding : bindings) {
+                graph.downstream.computeIfAbsent(binding.getProductBarcode(), key -> new ArrayList<>()).add(binding);
+                graph.upstream.computeIfAbsent(binding.getMaterialBarcode(), key -> new ArrayList<>()).add(binding);
+
+                String target = up ? binding.getProductBarcode() : binding.getMaterialBarcode();
+                if (up || "\u534a\u6210\u54c1".equals(binding.getCategory())) {
+                    finishedBarcodes.add(target);
+                    next.add(target);
+                } else {
+                    materialBarcodes.add(target);
+                }
+            }
+            frontier = next;
+        }
+    }
     private void collectReachableBarcodes(String rootBarcode, boolean up,
                                           TraceGraphContext graph,
                                           Set<String> finishedBarcodes,
@@ -407,7 +435,7 @@ public class IncomingTraceService {
         root.put("name", "来料批次影响范围");
         root.put("children", lots);
 
-        return result(root, visited.size(), "BATCH_IMPACT", lots.size());
+        return result(root, visited.size(), "BATCH_IMPACT", lots.size(), graph);
     }
 
     // ==================== 节点构建（§6.4 字段映射） ====================
@@ -506,11 +534,17 @@ public class IncomingTraceService {
 
     /** 结果包装 */
     private Map<String, Object> result(Map<String, Object> root, int visitedCount,
-                                        String direction, int batchLots) {
+                                        String direction, int batchLots,
+                                        TraceGraphContext graph) {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("root", root);
         r.put("direction", direction);
-        r.put("summary", summary());
+        Map<String, Object> lightweightSummary = new LinkedHashMap<>();
+        lightweightSummary.put("materialBatches", graph.materialsByBarcode.size());
+        lightweightSummary.put("supplierCount", 0);
+        lightweightSummary.put("nodeCount", graph.finishedGoodsByBarcode.size()
+                + graph.materialsByBarcode.size());
+        r.put("summary", lightweightSummary);
         r.put("visitedNodes", visitedCount);
         r.put("batchLots", batchLots);
         return r;

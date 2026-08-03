@@ -11,6 +11,6 @@ public interface SpcChartService {
     /** 重新计算并保存控制限（子组数 < 2 时清空） */
     SpcControlLimit recalcControlLimits(Long paramId, String plantCode);
 
-    /** 获取控制图数据（含控制限与子组点） */
-    SpcChartDataDTO getChartData(Long paramId, String chartType, String plantCode);
+    /** 获取控制图数据（含控制限与子组点）；itemType/itemCode 为空时不过滤，用于按产品/物料代码关联 */
+    SpcChartDataDTO getChartData(Long paramId, String chartType, String plantCode, String itemType, String itemCode);
 }

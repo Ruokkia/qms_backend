@@ -30,6 +30,15 @@ public class FaiInspectionQuery implements Serializable {
     @ApiModelProperty(value = "物料名称（模糊）")
     private String materialName;
 
+    @ApiModelProperty(value = "分类：PRODUCT(产品)/MATERIAL(物料)，用于区分产品与物料元组")
+    private String itemType;
+
     @ApiModelProperty(value = "判定结果：待判定/合格/不合格")
     private String inspectionResult;
+
+    @ApiModelProperty(value = "电子签名状态：未签/已签（精确）")
+    private String signatureStatus;
+
+    @ApiModelProperty(value = "档案模式：true 时仅返回已签记录（不合格亦可进档案，未签不进档案；历史报告档案专用）")
+    private Boolean archiveOnly;
 }

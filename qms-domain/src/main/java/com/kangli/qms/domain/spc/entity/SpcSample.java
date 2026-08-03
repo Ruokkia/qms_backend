@@ -30,6 +30,8 @@ public class SpcSample implements Serializable {
     private Integer sampleNo;
     /** 样本实测值 */
     private BigDecimal sampleValue;
+    /** 样本对应条码（SN 级追溯标识，可空：未与实物绑定则空） */
+    private String barcode;
 
     // ---- 系统扩展列 ----
     private String plantCode;

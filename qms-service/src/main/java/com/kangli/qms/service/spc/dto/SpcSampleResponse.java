@@ -17,4 +17,6 @@ public class SpcSampleResponse implements Serializable {
     private Long subgroupId;
     private Integer sampleNo;
     private BigDecimal sampleValue;
+    /** 样本对应条码（SN 级追溯标识，可空） */
+    private String barcode;
 }

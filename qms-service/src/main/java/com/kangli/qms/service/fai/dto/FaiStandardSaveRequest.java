@@ -19,6 +19,15 @@ public class FaiStandardSaveRequest {
     @ApiModelProperty(value = "物料名称（便于展示）")
     private String materialName;
 
+    @ApiModelProperty(value = "分类：PRODUCT(产品)/MATERIAL(物料)", required = true)
+    private String itemType;
+
+    @ApiModelProperty(value = "产品/物料代码（随 itemType 取值）")
+    private String itemCode;
+
+    @ApiModelProperty(value = "产品/物料名称（随 itemType 取值）")
+    private String itemName;
+
     @ApiModelProperty(value = "工序：装配/焊接/检测", required = true)
     private String processName;
     private String processCode;

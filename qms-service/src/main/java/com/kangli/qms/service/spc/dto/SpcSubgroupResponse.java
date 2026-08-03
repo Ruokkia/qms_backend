@@ -29,6 +29,8 @@ public class SpcSubgroupResponse implements Serializable {
     private String batchNo;
     private String materialCode;
     private String materialName;
+    private String itemType;
+    private String itemCode;
     private String processCode;
     private String subgroupStatus;
     private String plantCode;
