@@ -1,6 +1,7 @@
 package com.kangli.qms.service.trace;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.kangli.qms.common.LoginUser;
 import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
@@ -64,16 +65,18 @@ public class IncomingTraceService {
             throw new IllegalArgumentException("未找到追溯节点：" + rootBarcode);
         }
 
+        TraceGraphContext graph = loadGraphContext(rootBarcode, direction);
+
         if ("FULL".equals(direction)) {
             Set<String> upVisited = new LinkedHashSet<>();
             Set<String> downVisited = new LinkedHashSet<>();
-            root.put("upward", expand(rootBarcode, true, new LinkedHashSet<>(), upVisited));
-            root.put("children", expand(rootBarcode, false, new LinkedHashSet<>(), downVisited));
+            root.put("upward", expand(rootBarcode, true, new LinkedHashSet<>(), upVisited, graph));
+            root.put("children", expand(rootBarcode, false, new LinkedHashSet<>(), downVisited, graph));
             return result(root, upVisited.size() + downVisited.size(), direction, 0);
         } else {
             Set<String> visited = new LinkedHashSet<>();
             boolean up = "UP".equals(direction);
-            root.put("children", expand(rootBarcode, up, new LinkedHashSet<>(), visited));
+            root.put("children", expand(rootBarcode, up, new LinkedHashSet<>(), visited, graph));
             return result(root, visited.size(), direction, 0);
         }
     }
@@ -170,8 +173,10 @@ public class IncomingTraceService {
         Map<String, Object> s = new LinkedHashMap<>();
 
         // 物料检验统计（保留原有聚合 SQL，通过 JdbcTemplate 或直接查）
-        LambdaQueryWrapper<MaterialInspection> matAll = new LambdaQueryWrapper<>();
-        matAll.eq(MaterialInspection::getPlantCode, currentPlant);
+        QueryWrapper<MaterialInspection> matAll = new QueryWrapper<>();
+        matAll.select("inspection_result", "review_status", "supplier_code", "supplier_name",
+                "submitted_qty", "unqualified_qty", "material_batch_no")
+                .eq("plant_code", currentPlant);
         List<MaterialInspection> allMaterials = matMapper.selectList(matAll);
 
         long totalBatches = allMaterials.size();
@@ -216,10 +221,8 @@ public class IncomingTraceService {
 
         long finishedGoods = fgTotal - semiFinished;
 
-        LambdaQueryWrapper<MaterialInspection> matBatchWrapper = new LambdaQueryWrapper<>();
-        matBatchWrapper.eq(MaterialInspection::getPlantCode, currentPlant)
-                       .isNotNull(MaterialInspection::getMaterialBatchNo);
-        long materialBatches = matMapper.selectList(matBatchWrapper).stream()
+        // allMaterials 已经包含 material_batch_no，直接复用本次查询结果，避免第二次全表扫描。
+        long materialBatches = allMaterials.stream()
                 .map(MaterialInspection::getMaterialBatchNo)
                 .filter(StringUtils::hasText)
                 .distinct().count();
@@ -245,58 +248,130 @@ public class IncomingTraceService {
      * @return 子节点列表
      */
     private List<Map<String, Object>> expand(String barcode, boolean up,
-                                              Set<String> path, Set<String> visited) {
-        if (!path.add(barcode)) return Collections.emptyList();    // 分支级防环
-        if (!visited.add(barcode)) return Collections.emptyList();  // 全局去重
+                                              Set<String> path, Set<String> visited,
+                                              TraceGraphContext graph) {
+        if (!path.add(barcode)) return Collections.emptyList();
+        if (!visited.add(barcode)) return Collections.emptyList();
 
-        String currentPlant = plant();
-
-        // 查询 binding 表
-        LambdaQueryWrapper<CriticalMaterialBinding> wrapper = new LambdaQueryWrapper<>();
-        if (up) {
-            wrapper.eq(CriticalMaterialBinding::getMaterialBarcode, barcode);
-        } else {
-            wrapper.eq(CriticalMaterialBinding::getProductBarcode, barcode);
-        }
-        wrapper.eq(CriticalMaterialBinding::getPlantCode, currentPlant);
-        List<CriticalMaterialBinding> bindings = bindingMapper.selectList(wrapper);
+        List<CriticalMaterialBinding> bindings = up
+                ? graph.upstream.getOrDefault(barcode, Collections.emptyList())
+                : graph.downstream.getOrDefault(barcode, Collections.emptyList());
 
         List<Map<String, Object>> children = new ArrayList<>();
         for (CriticalMaterialBinding binding : bindings) {
             String targetBarcode = up ? binding.getProductBarcode() : binding.getMaterialBarcode();
-
             Map<String, Object> child;
             if (up) {
-                // UP: targetBarcode 是父级产品条码，查成品表
-                FinishedGoodsInspection fg = selectFirstFg(targetBarcode, currentPlant);
+                FinishedGoodsInspection fg = graph.finishedGoodsByBarcode.get(targetBarcode);
                 if (fg != null) {
                     child = buildNodeFromFg(fg);
-                    child.put("children", expand(targetBarcode, true, new LinkedHashSet<>(path), visited));
+                    child.put("children", expand(targetBarcode, true, new LinkedHashSet<>(path), visited, graph));
                 } else {
                     child = buildOrphanNode(targetBarcode);
                 }
+            } else if ("\u534a\u6210\u54c1".equals(binding.getCategory())) {
+                FinishedGoodsInspection fg = graph.finishedGoodsByBarcode.get(targetBarcode);
+                child = fg != null ? buildNodeFromFg(fg) : buildOrphanNode(targetBarcode);
+                child.put("children", expand(targetBarcode, false, new LinkedHashSet<>(path), visited, graph));
             } else {
-                // DOWN: 根据 binding.category 判断子类型
-                if ("半成品".equals(binding.getCategory())) {
-                    FinishedGoodsInspection fg = selectFirstFg(targetBarcode, currentPlant);
-                    child = fg != null ? buildNodeFromFg(fg) : buildOrphanNode(targetBarcode);
-                    child.put("children", expand(targetBarcode, false, new LinkedHashSet<>(path), visited));
-                } else {
-                    // "物料" — 叶子节点，不递归
-                    MaterialInspection mat = matMapper.selectOne(
-                            new LambdaQueryWrapper<MaterialInspection>()
-                                    .eq(MaterialInspection::getMaterialBarcode, targetBarcode)
-                                    .eq(MaterialInspection::getPlantCode, currentPlant));
-                    child = mat != null ? buildNodeFromMat(mat) : buildOrphanNode(targetBarcode);
-                }
+                MaterialInspection mat = graph.materialsByBarcode.get(targetBarcode);
+                child = mat != null ? buildNodeFromMat(mat) : buildOrphanNode(targetBarcode);
             }
             children.add(child);
         }
         return children;
     }
 
-    // ==================== 批次影响分析 ====================
+    /**
+     * Loads one plant-scoped graph per request and resolves reachable business rows in batches.
+     * This replaces the recursive N+1 queries from the previous implementation.
+     */
+    private TraceGraphContext loadGraphContext(String rootBarcode, String direction) {
+        return loadGraphContext(Collections.singleton(rootBarcode), direction);
+    }
 
+    private TraceGraphContext loadGraphContext(Collection<String> rootBarcodes, String direction) {
+        String currentPlant = plant();
+        TraceGraphContext graph = new TraceGraphContext(currentPlant);
+
+        QueryWrapper<CriticalMaterialBinding> bindingWrapper = new QueryWrapper<>();
+        bindingWrapper.select("product_barcode", "material_barcode", "category")
+                .eq("plant_code", currentPlant);
+        for (CriticalMaterialBinding binding : bindingMapper.selectList(bindingWrapper)) {
+            graph.downstream.computeIfAbsent(binding.getProductBarcode(), key -> new ArrayList<>()).add(binding);
+            graph.upstream.computeIfAbsent(binding.getMaterialBarcode(), key -> new ArrayList<>()).add(binding);
+        }
+
+        Set<String> finishedBarcodes = new LinkedHashSet<>();
+        Set<String> materialBarcodes = new LinkedHashSet<>();
+        for (String rootBarcode : rootBarcodes) {
+            if ("FULL".equals(direction) || "UP".equals(direction)) {
+                collectReachableBarcodes(rootBarcode, true, graph, finishedBarcodes, materialBarcodes);
+            }
+            if ("FULL".equals(direction) || "DOWN".equals(direction)) {
+                collectReachableBarcodes(rootBarcode, false, graph, finishedBarcodes, materialBarcodes);
+            }
+        }
+
+        if (!finishedBarcodes.isEmpty()) {
+            QueryWrapper<FinishedGoodsInspection> fgWrapper = new QueryWrapper<>();
+            fgWrapper.select("id", "prod_batch_or_sn", "product_name", "material_code",
+                    "model_spec", "category", "plant_code")
+                    .eq("plant_code", currentPlant)
+                    .in("prod_batch_or_sn", finishedBarcodes);
+            for (FinishedGoodsInspection fg : fgMapper.selectList(fgWrapper)) {
+                graph.finishedGoodsByBarcode.putIfAbsent(fg.getProdBatchOrSn(), fg);
+            }
+        }
+        if (!materialBarcodes.isEmpty()) {
+            QueryWrapper<MaterialInspection> matWrapper = new QueryWrapper<>();
+            matWrapper.select("id", "material_barcode", "material_name", "material_code",
+                    "material_batch_no", "spec_model", "plant_code")
+                    .eq("plant_code", currentPlant)
+                    .in("material_barcode", materialBarcodes);
+            for (MaterialInspection material : matMapper.selectList(matWrapper)) {
+                graph.materialsByBarcode.putIfAbsent(material.getMaterialBarcode(), material);
+            }
+        }
+        return graph;
+    }
+
+    private void collectReachableBarcodes(String rootBarcode, boolean up,
+                                          TraceGraphContext graph,
+                                          Set<String> finishedBarcodes,
+                                          Set<String> materialBarcodes) {
+        Deque<String> queue = new ArrayDeque<>();
+        Set<String> expanded = new HashSet<>();
+        queue.add(rootBarcode);
+        while (!queue.isEmpty()) {
+            String barcode = queue.removeFirst();
+            if (!expanded.add(barcode)) continue;
+            List<CriticalMaterialBinding> bindings = up
+                    ? graph.upstream.getOrDefault(barcode, Collections.emptyList())
+                    : graph.downstream.getOrDefault(barcode, Collections.emptyList());
+            for (CriticalMaterialBinding binding : bindings) {
+                String target = up ? binding.getProductBarcode() : binding.getMaterialBarcode();
+                if (up || "\u534a\u6210\u54c1".equals(binding.getCategory())) {
+                    finishedBarcodes.add(target);
+                    queue.addLast(target);
+                } else {
+                    materialBarcodes.add(target);
+                }
+            }
+        }
+    }
+
+    private static final class TraceGraphContext {
+        private final String plantCode;
+        private final Map<String, List<CriticalMaterialBinding>> downstream = new HashMap<>();
+        private final Map<String, List<CriticalMaterialBinding>> upstream = new HashMap<>();
+        private final Map<String, FinishedGoodsInspection> finishedGoodsByBarcode = new HashMap<>();
+        private final Map<String, MaterialInspection> materialsByBarcode = new HashMap<>();
+
+        private TraceGraphContext(String plantCode) {
+            this.plantCode = plantCode;
+        }
+    }
     private Map<String, Object> batchImpact(String batchNo) {
         String currentPlant = plant();
 
@@ -311,10 +386,17 @@ public class IncomingTraceService {
         }
 
         Set<String> visited = new LinkedHashSet<>();
+        Set<String> batchBarcodes = new LinkedHashSet<>();
+        for (MaterialInspection material : materials) {
+            if (StringUtils.hasText(material.getMaterialBarcode())) {
+                batchBarcodes.add(material.getMaterialBarcode());
+            }
+        }
+        TraceGraphContext graph = loadGraphContext(batchBarcodes, "UP");
         List<Map<String, Object>> lots = new ArrayList<>();
         for (MaterialInspection mat : materials) {
             Map<String, Object> node = buildNodeFromMat(mat);
-            node.put("children", expand(mat.getMaterialBarcode(), true, new LinkedHashSet<>(), visited));
+            node.put("children", expand(mat.getMaterialBarcode(), true, new LinkedHashSet<>(), visited, graph));
             lots.add(node);
         }
 
@@ -438,5 +520,100 @@ public class IncomingTraceService {
     private String plant() {
         LoginUser user = LoginUserHolder.get();
         return user == null || user.getPlantCode() == null ? null : user.getPlantCode().name();
+    }
+
+    /**
+     * 按 itemType + 条码查询单条产品/物料主数据，用于 FAI/SPC 录入时自动带出代码、名称、批次号。
+     *
+     * @param itemType PRODUCT(成品表) / MATERIAL(物料表)
+     * @param barcode  产品条码(prod_batch_or_sn) 或 物料条码(material_barcode)
+     * @return {itemCode, itemName, batchNo}
+     */
+    public Map<String, Object> itemByBarcode(String itemType, String barcode) {
+        if (!StringUtils.hasText(itemType) || !StringUtils.hasText(barcode)) {
+            throw new IllegalArgumentException("itemType 与 barcode 不能为空");
+        }
+        String currentPlant = plant();
+        barcode = barcode.trim();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        if ("PRODUCT".equalsIgnoreCase(itemType)) {
+            FinishedGoodsInspection fg = selectFirstFg(barcode, currentPlant);
+            if (fg == null) {
+                throw new IllegalArgumentException("未找到产品条码：" + barcode);
+            }
+            result.put("itemCode", fg.getMaterialCode());
+            result.put("itemName", fg.getProductName());
+            result.put("batchNo", fg.getProdBatchOrSn());
+        } else if ("MATERIAL".equalsIgnoreCase(itemType)) {
+            MaterialInspection mat = matMapper.selectOne(
+                    new LambdaQueryWrapper<MaterialInspection>()
+                            .eq(MaterialInspection::getMaterialBarcode, barcode)
+                            .eq(MaterialInspection::getPlantCode, currentPlant));
+            if (mat == null) {
+                throw new IllegalArgumentException("未找到物料条码：" + barcode);
+            }
+            result.put("itemCode", mat.getMaterialCode());
+            result.put("itemName", mat.getMaterialName());
+            result.put("batchNo", mat.getMaterialBatchNo());
+        } else {
+            throw new IllegalArgumentException("不支持的 itemType: " + itemType);
+        }
+        return result;
+    }
+
+    /**
+     * 按 itemType + 关键字模糊搜索产品/物料主数据，用于录入时下拉候选。
+     * 关键字对「条码 / 代码 / 名称」三列做 LIKE %keyword% OR 匹配（不区分大小写），
+     * 限定 currentPlant 且未删除（@TableLogic 自动生效）。
+     *
+     * @param itemType PRODUCT(成品表) / MATERIAL(物料表)
+     * @param keyword  条码/代码/名称关键字（自动 trim，空则返回空列表）
+     * @param limit    最大返回条数（默认 20）
+     * @return [{barcode, itemCode, itemName, batchNo}]
+     */
+    public List<Map<String, Object>> searchByBarcode(String itemType, String keyword, int limit) {
+        List<Map<String, Object>> results = new ArrayList<>();
+        if (!StringUtils.hasText(itemType) || !StringUtils.hasText(keyword)) {
+            return results;
+        }
+        String currentPlant = plant();
+        final String kw = keyword.trim();
+        int max = limit > 0 ? limit : 20;
+
+        if ("PRODUCT".equalsIgnoreCase(itemType)) {
+            List<FinishedGoodsInspection> list = fgMapper.selectList(
+                    new LambdaQueryWrapper<FinishedGoodsInspection>()
+                            .eq(FinishedGoodsInspection::getPlantCode, currentPlant)
+                            .and(w -> w.like(FinishedGoodsInspection::getProdBatchOrSn, kw)
+                                    .or().like(FinishedGoodsInspection::getMaterialCode, kw)
+                                    .or().like(FinishedGoodsInspection::getProductName, kw))
+                            .last("LIMIT " + max));
+            for (FinishedGoodsInspection fg : list) {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("barcode", fg.getProdBatchOrSn());
+                r.put("itemCode", fg.getMaterialCode());
+                r.put("itemName", fg.getProductName());
+                r.put("batchNo", fg.getProdBatchOrSn());
+                results.add(r);
+            }
+        } else if ("MATERIAL".equalsIgnoreCase(itemType)) {
+            List<MaterialInspection> list = matMapper.selectList(
+                    new LambdaQueryWrapper<MaterialInspection>()
+                            .eq(MaterialInspection::getPlantCode, currentPlant)
+                            .and(w -> w.like(MaterialInspection::getMaterialBarcode, kw)
+                                    .or().like(MaterialInspection::getMaterialCode, kw)
+                                    .or().like(MaterialInspection::getMaterialName, kw))
+                            .last("LIMIT " + max));
+            for (MaterialInspection mat : list) {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("barcode", mat.getMaterialBarcode());
+                r.put("itemCode", mat.getMaterialCode());
+                r.put("itemName", mat.getMaterialName());
+                r.put("batchNo", mat.getMaterialBatchNo());
+                results.add(r);
+            }
+        }
+        return results;
     }
 }

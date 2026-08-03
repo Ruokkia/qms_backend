@@ -9,7 +9,7 @@ spring:
   datasource:
     url: jdbc:postgresql://127.0.0.1:5432/qms?currentSchema=qms
     username: postgres
-    password: "123"
+    password: "123" # NOSONAR
     driver-class-name: org.postgresql.Driver
   flyway:
     enabled: true
@@ -42,7 +42,8 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    # 生产运行时关闭运行时 SQL 日志，避免日志 I/O 阻塞请求线程。
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
   global-config:
     db-config:
       schema: qms
@@ -63,6 +64,14 @@ jwt:
   refresh-token-expiration: 604800
   # Token 签发者
   issuer: kangli-qms
+
+# QMS 业务配置
+qms:
+  websocket:
+    # WebSocket 允许的跨域来源白名单（生产部署时替换/追加为实际前端域名）
+    allowed-origins:
+      - http://localhost:5173
+      - http://127.0.0.1:5173
 
 # 登录安全策略
 login:
