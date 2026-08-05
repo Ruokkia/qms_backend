@@ -63,6 +63,9 @@ public class VerificationRecordController {
         record.setPlantName(loginUser.getPlantCode().getChineseName());
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
+        if (record.getResult() != null && !"通过".equals(record.getResult()) && !"不通过".equals(record.getResult())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "验证结果必须是「通过」或「不通过」");
+        }
         // 防御：新增时不允许客户端指定主键，交由 PG 标识列生成（GENERATED ALWAYS AS IDENTITY）
         record.setId(null);
         verificationRecordService.save(record);

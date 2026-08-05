@@ -536,6 +536,8 @@ public class ExceptionServiceImpl implements ExceptionService {
     @Override
     @Transactional
     public ExceptionOrder initiate(Long id, String processType) {
+        // 权限加固：发起整改流程需 R03/R04/R06（R00 超级管理员绕过）
+        assertRole("R03", "R04", "R06");
         if (!VALID_PROCESS_TYPES.contains(processType)) {
             throw new BusinessException(ResultCode.BAD_REQUEST,
                     "无效的整改流程类型：" + processType + "（应为 CAPA / 8D / BOTH）");
@@ -553,6 +555,10 @@ public class ExceptionServiceImpl implements ExceptionService {
         update.setId(id);
         update.setProcessType(processType);
         update.setCapaStatus("进行中");
+        // 状态机联动：发起即进入「整改中」，与后续「待验证」「已闭环」形成完整流转
+        update.setStatus("整改中");
+        // 乐观锁回填：防止并发双开发起互相覆盖 processType
+        update.setVersion(existing.getVersion());
         LoginUser loginUser = getCurrentLoginUser();
         update.setUpdatedBy(loginUser.getRealName());
         exceptionOrderMapper.updateById(update);
@@ -573,6 +579,8 @@ public class ExceptionServiceImpl implements ExceptionService {
     @Override
     @Transactional
     public void close(Long id, ExceptionCloseDTO dto) {
+        // 权限加固：闭环需 R06 质量经理（R00 超级管理员绕过）
+        assertRole("R06");
         ExceptionOrder order = exceptionOrderMapper.selectById(id);
         if (order == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在：" + id);
@@ -581,73 +589,8 @@ public class ExceptionServiceImpl implements ExceptionService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "异常单已闭环，无需重复操作");
         }
 
-        // 增强前置条件检查，拼装缺失项
-        List<String> missing = new ArrayList<>();
-
-        // 1. 流程必须已发起
-        if (order.getProcessType() == null || "待发起".equals(order.getCapaStatus())) {
-            missing.add("整改流程尚未发起");
-        }
-
-        // 2. 所有整改计划必须完成
-        LambdaQueryWrapper<RectificationPlan> planWrapper = new LambdaQueryWrapper<>();
-        planWrapper.eq(RectificationPlan::getExceptionId, id);
-        List<RectificationPlan> plans = rectificationPlanMapper.selectList(planWrapper);
-        long planTotal = plans.size();
-        long planDone = plans.stream().filter(p -> "已完成".equals(p.getStatus())).count();
-        if (planTotal > 0 && planDone < planTotal) {
-            missing.add("整改计划未全部完成（" + planDone + "/" + planTotal + "）");
-        }
-
-        // 3. 所有改善措施必须完成
-        LambdaQueryWrapper<ImprovementAction> actionWrapper = new LambdaQueryWrapper<>();
-        actionWrapper.eq(ImprovementAction::getExceptionId, id);
-        List<ImprovementAction> actions = improvementActionMapper.selectList(actionWrapper);
-        long actionTotal = actions.size();
-        long actionDone = actions.stream().filter(a -> "DONE".equals(a.getStatus())).count();
-        if (actionTotal == 0) {
-            missing.add("尚无改善措施");
-        } else if (actionDone < actionTotal) {
-            missing.add("存在未完成的改善措施（" + actionDone + "/" + actionTotal + " DONE）");
-        }
-
-        // 4. 最新验证记录必须通过
-        LambdaQueryWrapper<VerificationRecord> verifyWrapper = new LambdaQueryWrapper<>();
-        verifyWrapper.eq(VerificationRecord::getExceptionId, id)
-                .orderByDesc(VerificationRecord::getVerifyDate)
-                .orderByDesc(VerificationRecord::getId);
-        List<VerificationRecord> verifs = verificationRecordMapper.selectList(verifyWrapper);
-        if (verifs.isEmpty()) {
-            missing.add("尚无验证记录");
-        } else if (!"通过".equals(verifs.get(0).getResult())) {
-            missing.add("最新验证结果不是「通过」");
-        }
-
-        // 5. 若流程含 8D：必须 D8 完成
-        if (processIncludes8D(order.getProcessType())) {
-            Exception8d eightD = exception8dMapper.selectByExceptionId(id);
-            if (eightD == null) {
-                missing.add("8D 报告未创建");
-            } else {
-                if (!"D8".equals(eightD.getCurrentStep())) {
-                    missing.add("8D 报告未走完（当前：" + eightD.getCurrentStep() + "）");
-                }
-                // 检查 D1~D8 是否全部已填写
-                List<String> unfilledDSteps = new ArrayList<>();
-                if (eightD.getD1Team() == null || eightD.getD1Team().trim().isEmpty()) unfilledDSteps.add("D1");
-                if (eightD.getD2ProblemDesc() == null || eightD.getD2ProblemDesc().trim().isEmpty()) unfilledDSteps.add("D2");
-                if (eightD.getD3Containment() == null || eightD.getD3Containment().trim().isEmpty()) unfilledDSteps.add("D3");
-                if (eightD.getD4RootCause() == null || eightD.getD4RootCause().trim().isEmpty()) unfilledDSteps.add("D4");
-                if (eightD.getD5Corrective() == null || eightD.getD5Corrective().trim().isEmpty()) unfilledDSteps.add("D5");
-                if (eightD.getD6Implementation() == null || eightD.getD6Implementation().trim().isEmpty()) unfilledDSteps.add("D6");
-                if (eightD.getD7Preventive() == null || eightD.getD7Preventive().trim().isEmpty()) unfilledDSteps.add("D7");
-                if (eightD.getD8Closure() == null || eightD.getD8Closure().trim().isEmpty()) unfilledDSteps.add("D8");
-                if (!unfilledDSteps.isEmpty()) {
-                    missing.add("8D 步骤未填写：" + String.join("、", unfilledDSteps));
-                }
-            }
-        }
-
+        // 统一闭环前置条件校验（close 与 closeReadiness 共用，杜绝逻辑漂移）
+        List<String> missing = evaluateCloseMissing(order);
         if (!missing.isEmpty()) {
             throw new BusinessException(ResultCode.CLOSE_PRECONDITION_NOT_MET,
                     "闭环前置条件不满足：" + String.join("；", missing));
@@ -682,9 +625,22 @@ public class ExceptionServiceImpl implements ExceptionService {
         if (order == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在：" + id);
         }
+        // 复用统一校验方法，构建明细检查项
+        List<CloseReadinessVO.CheckItem> checks = evaluateCloseChecks(order);
+        boolean canClose = checks.stream().noneMatch(c -> "FAIL".equals(c.getStatus()));
+        CloseReadinessVO result = new CloseReadinessVO();
+        result.setCanClose(canClose);
+        result.setChecks(checks);
+        return result;
+    }
 
+    /**
+     * 统一的闭环前置条件校验（close 与 closeReadiness 共用，杜绝逻辑漂移）。
+     * 返回每项检查明细；status 为 PASS/FAIL/NA，detail 为说明。
+     */
+    private List<CloseReadinessVO.CheckItem> evaluateCloseChecks(ExceptionOrder order) {
+        Long id = order.getId();
         List<CloseReadinessVO.CheckItem> checks = new ArrayList<>();
-        boolean canClose = true;
 
         // 1. 整改流程是否已发起
         {
@@ -696,7 +652,6 @@ public class ExceptionServiceImpl implements ExceptionService {
             } else {
                 item.setStatus("FAIL");
                 item.setDetail("尚未发起整改流程");
-                canClose = false;
             }
             checks.add(item);
         }
@@ -718,20 +673,17 @@ public class ExceptionServiceImpl implements ExceptionService {
             } else if (planTotal == 0) {
                 item.setStatus("FAIL");
                 item.setDetail("尚未制定整改计划");
-                canClose = false;
+            } else if (planDone >= planTotal) {
+                item.setStatus("PASS");
+                item.setDetail(planDone + "/" + planTotal + " 已完成");
             } else {
-                if (planDone >= planTotal) {
-                    item.setStatus("PASS");
-                } else {
-                    item.setStatus("FAIL");
-                    canClose = false;
-                }
+                item.setStatus("FAIL");
                 item.setDetail(planDone + "/" + planTotal + " 已完成");
             }
             checks.add(item);
         }
 
-        // 3. 改善措施
+        // 3. 改善措施（全部 DONE 才通过）
         {
             CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
             item.setItem("改善措施");
@@ -743,19 +695,17 @@ public class ExceptionServiceImpl implements ExceptionService {
             if (actionTotal == 0) {
                 item.setStatus("FAIL");
                 item.setDetail("尚无改善措施");
-                canClose = false;
             } else if (actionDone >= actionTotal) {
                 item.setStatus("PASS");
                 item.setDetail(actionDone + "/" + actionTotal + " DONE");
             } else {
                 item.setStatus("FAIL");
                 item.setDetail(actionDone + "/" + actionTotal + " DONE，" + (actionTotal - actionDone) + "条PENDING");
-                canClose = false;
             }
             checks.add(item);
         }
 
-        // 4. 验证记录
+        // 4. 验证记录（最新一条须通过，且验证日期须晚于所有改善措施完成时间、验证人非空）
         {
             CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
             item.setItem("验证记录");
@@ -767,14 +717,37 @@ public class ExceptionServiceImpl implements ExceptionService {
             if (verifs.isEmpty()) {
                 item.setStatus("FAIL");
                 item.setDetail("尚无验证记录");
-                canClose = false;
-            } else if ("通过".equals(verifs.get(0).getResult())) {
-                item.setStatus("PASS");
-                item.setDetail(verifs.size() + "条验证，最新结果「通过」");
             } else {
-                item.setStatus("FAIL");
-                item.setDetail(verifs.size() + "条验证，最新结果「不通过」");
-                canClose = false;
+                VerificationRecord latest = verifs.get(0);
+                if (!"通过".equals(latest.getResult())) {
+                    item.setStatus("FAIL");
+                    item.setDetail(verifs.size() + "条验证，最新结果「不通过」");
+                } else if (latest.getVerifierName() == null || latest.getVerifierName().trim().isEmpty()) {
+                    item.setStatus("FAIL");
+                    item.setDetail("最新验证结果「通过」，但验证人为空");
+                } else {
+                    // 时序校验：最新验证日期须晚于所有已完成改善措施的完成时间
+                    LocalDate verifyDate = latest.getVerifyDate();
+                    boolean timingOk = true;
+                    LambdaQueryWrapper<ImprovementAction> actionWrapper = new LambdaQueryWrapper<>();
+                    actionWrapper.eq(ImprovementAction::getExceptionId, id)
+                            .eq(ImprovementAction::getStatus, "DONE");
+                    List<ImprovementAction> doneActions = improvementActionMapper.selectList(actionWrapper);
+                    for (ImprovementAction act : doneActions) {
+                        if (act.getCompletedAt() != null && verifyDate != null
+                                && verifyDate.isBefore(act.getCompletedAt().toLocalDate())) {
+                            timingOk = false;
+                            break;
+                        }
+                    }
+                    if (!timingOk) {
+                        item.setStatus("FAIL");
+                        item.setDetail("验证日期早于改善措施完成时间，时序不合规");
+                    } else {
+                        item.setStatus("PASS");
+                        item.setDetail(verifs.size() + "条验证，最新结果「通过」");
+                    }
+                }
             }
             checks.add(item);
         }
@@ -791,13 +764,10 @@ public class ExceptionServiceImpl implements ExceptionService {
                 if (eightD == null) {
                     item.setStatus("FAIL");
                     item.setDetail("8D 报告未创建");
-                    canClose = false;
                 } else if (!"D8".equals(eightD.getCurrentStep())) {
                     item.setStatus("FAIL");
                     item.setDetail("当前步骤：" + eightD.getCurrentStep() + "，需走完 D8");
-                    canClose = false;
                 } else {
-                    // D8 且检查所有步骤是否填写
                     List<String> unfilledDSteps = new ArrayList<>();
                     if (eightD.getD1Team() == null || eightD.getD1Team().trim().isEmpty()) unfilledDSteps.add("D1");
                     if (eightD.getD2ProblemDesc() == null || eightD.getD2ProblemDesc().trim().isEmpty()) unfilledDSteps.add("D2");
@@ -810,7 +780,6 @@ public class ExceptionServiceImpl implements ExceptionService {
                     if (!unfilledDSteps.isEmpty()) {
                         item.setStatus("FAIL");
                         item.setDetail("D8已到达，但以下步骤未填写：" + String.join("、", unfilledDSteps));
-                        canClose = false;
                     } else {
                         item.setStatus("PASS");
                         item.setDetail("8D D1~D8 全部完成");
@@ -820,10 +789,20 @@ public class ExceptionServiceImpl implements ExceptionService {
             checks.add(item);
         }
 
-        CloseReadinessVO result = new CloseReadinessVO();
-        result.setCanClose(canClose);
-        result.setChecks(checks);
-        return result;
+        return checks;
+    }
+
+    /**
+     * 闭环前置缺失项（供 close 使用）：从统一校验中提取所有 FAIL 项的说明。
+     */
+    private List<String> evaluateCloseMissing(ExceptionOrder order) {
+        List<String> missing = new ArrayList<>();
+        for (CloseReadinessVO.CheckItem item : evaluateCloseChecks(order)) {
+            if ("FAIL".equals(item.getStatus())) {
+                missing.add(item.getItem() + "：" + item.getDetail());
+            }
+        }
+        return missing;
     }
 
     // ===== 根据来源ID查找异常单 =====
@@ -1300,6 +1279,23 @@ public class ExceptionServiceImpl implements ExceptionService {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "未获取到登录用户信息");
         }
         return loginUser;
+    }
+
+    /**
+     * 角色权限校验：R00 超级管理员绕过；其余角色仅允许在 allowedRoles 内的操作。
+     */
+    private void assertRole(String... allowedRoles) {
+        LoginUser loginUser = getCurrentLoginUser();
+        if ("R00".equals(loginUser.getRoleCode())) {
+            return;
+        }
+        for (String role : allowedRoles) {
+            if (role.equals(loginUser.getRoleCode())) {
+                return;
+            }
+        }
+        throw new BusinessException(ResultCode.FORBIDDEN,
+                "当前角色（" + loginUser.getRoleCode() + "）无权执行该操作");
     }
 
     /**

@@ -63,6 +63,9 @@ public class ImprovementActionController {
         action.setPlantName(loginUser.getPlantCode().getChineseName());
         action.setCreatedBy(loginUser.getRealName());
         action.setUpdatedBy(loginUser.getRealName());
+        if (action.getOwnerId() == null) {
+            action.setOwnerId(loginUser.getUserId());
+        }
         if (action.getStatus() == null) {
             action.setStatus("PENDING");
         }

@@ -4,11 +4,13 @@ import com.kangli.qms.common.PageResult;
 import com.kangli.qms.common.R;
 import com.kangli.qms.service.exception.dto.EightDSaveDTO;
 import com.kangli.qms.service.exception.dto.ExceptionCloseDTO;
+import com.kangli.qms.service.exception.dto.ExceptionUpdateDTO;
 import com.kangli.qms.domain.admin.entity.AuditLog;
 import com.kangli.qms.domain.exception.entity.ExceptionOrder;
 import com.kangli.qms.service.exception.EightDService;
 import com.kangli.qms.service.exception.ExceptionService;
 import com.kangli.qms.domain.exception.vo.CloseReadinessVO;
+import com.kangli.qms.domain.exception.vo.EightDStepLogVO;
 import com.kangli.qms.domain.exception.vo.EightDVO;
 import com.kangli.qms.domain.exception.vo.ExceptionAnalysisVO;
 import com.kangli.qms.domain.exception.vo.ExceptionDetailVO;
@@ -17,7 +19,6 @@ import com.kangli.qms.domain.exception.vo.QualityRuleCatalogVO;
 import com.kangli.qms.domain.supplier.vo.SupplierExceptionSummaryVO;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
-import io.swagger.annotations.ApiParam;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
@@ -75,9 +76,9 @@ public class ExceptionController {
     }
 
     @PutMapping("/{id}")
-    @ApiOperation(value = "更新异常单")
-    public R<Void> update(@PathVariable Long id, @RequestBody ExceptionOrder order) {
-        exceptionService.update(id, order);
+    @ApiOperation(value = "更新异常单", notes = "仅接受白名单字段，plantCode/exceptionNo/createdBy 等系统字段不可被篡改")
+    public R<Void> update(@PathVariable Long id, @RequestBody ExceptionUpdateDTO dto) {
+        exceptionService.update(id, dto);
         return R.ok(null, "更新成功");
     }
 
@@ -163,6 +164,12 @@ public class ExceptionController {
     @ApiOperation(value = "提交 8D 到下一步")
     public R<EightDVO> nextStepEightD(@PathVariable Long id) {
         return R.ok(eightDService.nextStep(id));
+    }
+
+    @GetMapping("/{id}/eight-d/history")
+    @ApiOperation(value = "查询 8D 步骤留痕", notes = "返回该异常单 8D 报告每一步的保存/推进操作快照，按操作时间升序，支撑审计追溯")
+    public R<List<EightDStepLogVO>> eightDHistory(@PathVariable Long id) {
+        return R.ok(eightDService.getStepLogs(id));
     }
 
     @GetMapping("/supplier-summary")

@@ -1,8 +1,10 @@
 package com.kangli.qms.service.exception;
 
 import com.kangli.qms.service.exception.dto.EightDSaveDTO;
-import com.kangli.qms.domain.exception.entity.Exception8d;
 import com.kangli.qms.domain.exception.vo.EightDVO;
+import com.kangli.qms.domain.exception.vo.EightDStepLogVO;
+
+import java.util.List;
 
 /**
  * 8D 报告服务。
@@ -23,4 +25,9 @@ public interface EightDService {
      * 推进到下一步。
      */
     EightDVO nextStep(Long exceptionId);
+
+    /**
+     * 查询 8D 步骤留痕（按操作时间升序）。
+     */
+    List<EightDStepLogVO> getStepLogs(Long exceptionId);
 }
