@@ -13,6 +13,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 
 /**
  * M1-4 成品入库检验 Controller。
@@ -41,6 +42,7 @@ public class FinishedGoodsInspectionController {
             @RequestParam(required = false) String qcReview,
             @RequestParam(required = false) String mgrApproval,
             @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String dateField,
             @RequestParam(required = false) String endDate) {
         LoginUser loginUser = getCurrentLoginUser();
         Page<FinishedGoodsInspection> pageObj = new Page<>(page, size);
@@ -64,14 +66,39 @@ public class FinishedGoodsInspectionController {
         if (StringUtils.hasText(mgrApproval)) {
             wrapper.eq(FinishedGoodsInspection::getMgrApproval, mgrApproval);
         }
-        if (StringUtils.hasText(startDate)) {
-            wrapper.ge(FinishedGoodsInspection::getProductionDate, LocalDate.parse(startDate));
-        }
-        if (StringUtils.hasText(endDate)) {
-            wrapper.le(FinishedGoodsInspection::getProductionDate, LocalDate.parse(endDate));
-        }
+        applyDateFilter(wrapper, dateField, startDate, endDate);
         wrapper.orderByDesc(FinishedGoodsInspection::getCreatedAt);
         return R.ok(finishedGoodsService.page(pageObj, wrapper));
+    }
+
+    private void applyDateFilter(LambdaQueryWrapper<FinishedGoodsInspection> wrapper, String dateField, String startDate, String endDate) {
+        String field = StringUtils.hasText(dateField) ? dateField : "productionDate";
+        LocalDate start = StringUtils.hasText(startDate) ? LocalDate.parse(startDate) : null;
+        LocalDate end = StringUtils.hasText(endDate) ? LocalDate.parse(endDate) : null;
+        if (start == null && end == null) return;
+        switch (field) {
+            case "expiryDate": applyDate(wrapper, FinishedGoodsInspection::getExpiryDate, start, end); break;
+            case "qcReviewTime": applyDateTime(wrapper, FinishedGoodsInspection::getQcReviewTime, start, end); break;
+            case "mgrApprovalTime": applyDateTime(wrapper, FinishedGoodsInspection::getMgrApprovalTime, start, end); break;
+            case "signatureTime": applyDateTime(wrapper, FinishedGoodsInspection::getSignatureTime, start, end); break;
+            case "createdAt": applyDateTime(wrapper, FinishedGoodsInspection::getCreatedAt, start, end); break;
+            case "updatedAt": applyDateTime(wrapper, FinishedGoodsInspection::getUpdatedAt, start, end); break;
+            default: applyDate(wrapper, FinishedGoodsInspection::getProductionDate, start, end); break;
+        }
+    }
+
+    private <T> void applyDate(LambdaQueryWrapper<FinishedGoodsInspection> wrapper,
+                              com.baomidou.mybatisplus.core.toolkit.support.SFunction<FinishedGoodsInspection, T> column,
+                              LocalDate start, LocalDate end) {
+        if (start != null) wrapper.ge(column, start);
+        if (end != null) wrapper.le(column, end);
+    }
+
+    private <T> void applyDateTime(LambdaQueryWrapper<FinishedGoodsInspection> wrapper,
+                                  com.baomidou.mybatisplus.core.toolkit.support.SFunction<FinishedGoodsInspection, T> column,
+                                  LocalDate start, LocalDate end) {
+        if (start != null) wrapper.ge(column, start.atStartOfDay());
+        if (end != null) wrapper.le(column, end.atTime(LocalTime.MAX));
     }
 
     @GetMapping("/{id}")

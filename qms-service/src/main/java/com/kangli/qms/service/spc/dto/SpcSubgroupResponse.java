@@ -31,6 +31,8 @@ public class SpcSubgroupResponse implements Serializable {
     private String materialName;
     private String itemType;
     private String itemCode;
+    /** 关联工序 spc_process.id（由 paramId 反查填充，便于前端 FAI 联动按工序定位） */
+    private Long processId;
     private String processCode;
     private String subgroupStatus;
     private String plantCode;

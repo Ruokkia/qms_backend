@@ -38,11 +38,13 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -268,7 +270,8 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         Map<Long, List<SpcSample>> bySub = sampleMapper.selectList(Wrappers.lambdaQuery(SpcSample.class)
                         .in(SpcSample::getSubgroupId, ids).eq(SpcSample::getIsDeleted, 0))
                 .stream().collect(Collectors.groupingBy(SpcSample::getSubgroupId, LinkedHashMap::new, Collectors.toList()));
-        return subs.stream().map(s -> toResponse(s, bySub.get(s.getId()))).collect(Collectors.toList());
+        Map<Long, Long> paramProcessMap = buildParamProcessMap(subs);
+        return subs.stream().map(s -> toResponse(s, bySub.get(s.getId()), paramProcessMap)).collect(Collectors.toList());
     }
 
     @Override
@@ -285,7 +288,8 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         Map<Long, List<SpcSample>> bySub = sampleMapper.selectList(Wrappers.lambdaQuery(SpcSample.class)
                         .in(SpcSample::getSubgroupId, ids).eq(SpcSample::getIsDeleted, 0))
                 .stream().collect(Collectors.groupingBy(SpcSample::getSubgroupId, LinkedHashMap::new, Collectors.toList()));
-        return subs.stream().map(s -> toResponse(s, bySub.get(s.getId()))).collect(Collectors.toList());
+        Map<Long, Long> paramProcessMap = buildParamProcessMap(subs);
+        return subs.stream().map(s -> toResponse(s, bySub.get(s.getId()), paramProcessMap)).collect(Collectors.toList());
     }
 
     @Override
@@ -297,7 +301,26 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         List<SpcSample> samples = sampleMapper.selectList(Wrappers.lambdaQuery(SpcSample.class)
                 .eq(SpcSample::getSubgroupId, id).eq(SpcSample::getIsDeleted, 0)
                 .orderByAsc(SpcSample::getSampleNo));
-        return toResponse(sub, samples);
+        Map<Long, Long> paramProcessMap = Collections.singletonMap(
+                sub.getParamId(), resolveProcessId(sub.getParamId()));
+        return toResponse(sub, samples, paramProcessMap);
+    }
+
+    /** 批量构建 paramId -> processId 映射，避免列表场景 N+1 查询 */
+    private Map<Long, Long> buildParamProcessMap(List<SpcSubgroup> subs) {
+        Set<Long> paramIds = subs.stream().map(SpcSubgroup::getParamId).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (paramIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return parameterMapper.selectList(Wrappers.lambdaQuery(SpcParameter.class)
+                        .in(SpcParameter::getId, paramIds).eq(SpcParameter::getIsDeleted, 0))
+                .stream().collect(Collectors.toMap(SpcParameter::getId, SpcParameter::getProcessId, (a, b) -> a));
+    }
+
+    private Long resolveProcessId(Long paramId) {
+        if (paramId == null) return null;
+        SpcParameter param = parameterMapper.selectById(paramId);
+        return param == null ? null : param.getProcessId();
     }
 
     @Override
@@ -440,7 +463,7 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         return BigDecimal.valueOf(stdD).setScale(SCALE, RoundingMode.HALF_UP);
     }
 
-    private SpcSubgroupResponse toResponse(SpcSubgroup sub, List<SpcSample> samples) {
+    private SpcSubgroupResponse toResponse(SpcSubgroup sub, List<SpcSample> samples, Map<Long, Long> paramProcessMap) {
         SpcSubgroupResponse r = new SpcSubgroupResponse();
         r.setId(sub.getId());
         r.setParamId(sub.getParamId());
@@ -458,6 +481,12 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         r.setMaterialName(sub.getMaterialName());
         r.setItemType(sub.getItemType());
         r.setItemCode(sub.getItemCode());
+        // processId 由 paramId 反查填充（paramProcessMap 命中则直接用，未命中兜底单查）
+        Long processId = paramProcessMap != null ? paramProcessMap.get(sub.getParamId()) : null;
+        if (processId == null) {
+            processId = resolveProcessId(sub.getParamId());
+        }
+        r.setProcessId(processId);
         r.setProcessCode(sub.getProcessCode());
         r.setSubgroupStatus(sub.getSubgroupStatus());
         r.setPlantCode(sub.getPlantCode());

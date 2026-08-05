@@ -27,6 +27,8 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+
+import java.time.LocalTime;
 import java.util.List;
 
 /**
@@ -58,6 +60,7 @@ public class MaterialInspectionController {
             @RequestParam(required = false) String supplierCode,
             @RequestParam(required = false) String materialCode,
             @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String dateField,
             @RequestParam(required = false) String endDate) {
         LoginUser loginUser = getCurrentLoginUser();
         Page<MaterialInspection> pageObj = new Page<>(page, size);
@@ -82,14 +85,41 @@ public class MaterialInspectionController {
         if (StringUtils.hasText(materialCode)) {
             wrapper.eq(MaterialInspection::getMaterialCode, materialCode);
         }
-        if (StringUtils.hasText(startDate)) {
-            wrapper.ge(MaterialInspection::getInspectionDate, LocalDate.parse(startDate));
-        }
-        if (StringUtils.hasText(endDate)) {
-            wrapper.le(MaterialInspection::getInspectionDate, LocalDate.parse(endDate));
-        }
+        applyDateFilter(wrapper, dateField, startDate, endDate);
         wrapper.orderByDesc(MaterialInspection::getInspectionDate);
         return R.ok(PageResult.of(materialInspectionService.page(pageObj, wrapper)));
+    }
+
+    private void applyDateFilter(LambdaQueryWrapper<MaterialInspection> wrapper, String dateField, String startDate, String endDate) {
+        String field = StringUtils.hasText(dateField) ? dateField : "inspectionDate";
+        LocalDate start = StringUtils.hasText(startDate) ? LocalDate.parse(startDate) : null;
+        LocalDate end = StringUtils.hasText(endDate) ? LocalDate.parse(endDate) : null;
+        if (start == null && end == null) return;
+        switch (field) {
+            case "judgementDate": applyDate(wrapper, MaterialInspection::getJudgementDate, start, end); break;
+            case "arrivalDate": applyDate(wrapper, MaterialInspection::getArrivalDate, start, end); break;
+            case "inspectionEndDate": applyDate(wrapper, MaterialInspection::getInspectionEndDate, start, end); break;
+            case "reviewDate": applyDate(wrapper, MaterialInspection::getReviewDate, start, end); break;
+            case "submitDate": applyDate(wrapper, MaterialInspection::getSubmitDate, start, end); break;
+            case "signatureTime": applyDateTime(wrapper, MaterialInspection::getSignatureTime, start, end); break;
+            case "createdAt": applyDateTime(wrapper, MaterialInspection::getCreatedAt, start, end); break;
+            case "updatedAt": applyDateTime(wrapper, MaterialInspection::getUpdatedAt, start, end); break;
+            default: applyDate(wrapper, MaterialInspection::getInspectionDate, start, end); break;
+        }
+    }
+
+    private <T> void applyDate(LambdaQueryWrapper<MaterialInspection> wrapper,
+                              com.baomidou.mybatisplus.core.toolkit.support.SFunction<MaterialInspection, T> column,
+                              LocalDate start, LocalDate end) {
+        if (start != null) wrapper.ge(column, start);
+        if (end != null) wrapper.le(column, end);
+    }
+
+    private <T> void applyDateTime(LambdaQueryWrapper<MaterialInspection> wrapper,
+                                  com.baomidou.mybatisplus.core.toolkit.support.SFunction<MaterialInspection, T> column,
+                                  LocalDate start, LocalDate end) {
+        if (start != null) wrapper.ge(column, start.atStartOfDay());
+        if (end != null) wrapper.le(column, end.atTime(LocalTime.MAX));
     }
 
     @GetMapping("/stats")

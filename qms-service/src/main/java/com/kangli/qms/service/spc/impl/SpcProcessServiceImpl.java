@@ -74,17 +74,58 @@ public class SpcProcessServiceImpl implements SpcProcessService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public SpcProcessResponse create(SpcProcessRequest request, LoginUser loginUser) {
+        validateProcess(request);
+        String plantCode = loginUser.getPlantCode().name();
+        // 同厂区工序编码唯一校验，避免重复工序污染参数/控制图/追溯
+        if (existsByPlantAndCode(plantCode, request.getProcessCode(), null)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST,
+                    "该厂区已存在相同工序编码：" + request.getProcessCode());
+        }
         SpcProcess entity = new SpcProcess();
         entity.setProcessCode(request.getProcessCode());
         entity.setProcessName(request.getProcessName());
         entity.setDescription(request.getDescription());
         entity.setSortOrder(request.getSortOrder() == null ? 0 : request.getSortOrder());
-        entity.setPlantCode(loginUser.getPlantCode().name());
+        entity.setPlantCode(plantCode);
         entity.setPlantName(loginUser.getPlantCode().getChineseName());
         entity.setCreatedBy(loginUser.getAccount());
         entity.setUpdatedBy(loginUser.getAccount());
         processMapper.insert(entity);
         return toResponse(entity);
+    }
+
+    /**
+     * 校验工序编码合法性（新增与更新共用）：
+     * 仅约束编码为 2~5 位大写字母（与前端正则一致）。
+     * 工序名称放开为可自由输入（前端模糊搜索 + 允许新建），后端不再做白名单兜底。
+     */
+    private void validateProcess(SpcProcessRequest request) {
+        String code = request.getProcessCode();
+        if (code == null || !code.matches("^[A-Z]{2,5}$")) {
+            throw new BusinessException(ResultCode.BAD_REQUEST,
+                    "工序编码必须为 2~5 位大写字母（如 ASM / WDG / INS）");
+        }
+        if (request.getProcessName() == null || request.getProcessName().isBlank()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "工序名称不能为空");
+        }
+    }
+
+    /**
+     * 判断同厂区是否已存在指定工序编码（非删除记录）。
+     *
+     * @param plantCode 厂区编码
+     * @param processCode 工序编码
+     * @param excludeId 排除的工序 id（更新自身时传入，避免与自身冲突）
+     */
+    private boolean existsByPlantAndCode(String plantCode, String processCode, Long excludeId) {
+        LambdaQueryWrapper<SpcProcess> qw = Wrappers.lambdaQuery(SpcProcess.class)
+                .eq(SpcProcess::getPlantCode, plantCode)
+                .eq(SpcProcess::getProcessCode, processCode)
+                .eq(SpcProcess::getIsDeleted, 0);
+        if (excludeId != null) {
+            qw.ne(SpcProcess::getId, excludeId);
+        }
+        return processMapper.selectCount(qw) > 0;
     }
 
     @Override
@@ -97,13 +138,21 @@ public class SpcProcessServiceImpl implements SpcProcessService {
         if (request.getVersion() != null && !request.getVersion().equals(current.getVersion())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "记录已被他人修改，请刷新后重试");
         }
+        validateProcess(request);
+        if (existsByPlantAndCode(current.getPlantCode(), request.getProcessCode(), id)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST,
+                    "该厂区已存在相同工序编码：" + request.getProcessCode());
+        }
         current.setProcessCode(request.getProcessCode());
         current.setProcessName(request.getProcessName());
         current.setDescription(request.getDescription());
         current.setSortOrder(request.getSortOrder() == null ? current.getSortOrder() : request.getSortOrder());
-        current.setVersion(current.getVersion() + 1);
+        // 不再手动 setVersion：@Version 拦截器会以当前版本作 WHERE 并自动 +1，避免误判导致更新 0 行
         current.setUpdatedBy(loginUser.getAccount());
-        processMapper.updateById(current);
+        int rows = processMapper.updateById(current);
+        if (rows == 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "记录已被他人修改，请刷新后重试");
+        }
         return toResponse(current);
     }
 
