@@ -8,15 +8,20 @@ import com.kangli.qms.common.LoginUser;
 import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.common.PageResult;
 import org.springframework.dao.DuplicateKeyException;
+import java.time.LocalDateTime;
 import com.kangli.qms.common.ResultCode;
+import com.kangli.qms.service.exception.ExceptionConstants;
+import com.kangli.qms.service.exception.ExceptionModuleHelper;
 import com.kangli.qms.service.exception.dto.ExceptionCloseDTO;
+import com.kangli.qms.service.exception.dto.ExceptionInitiateDTO;
 import com.kangli.qms.service.exception.dto.ExceptionUpdateDTO;
-import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
 import com.kangli.qms.domain.admin.entity.AuditLog;
+import com.kangli.qms.domain.admin.vo.AdminUserVO;
 import com.kangli.qms.domain.exception.entity.Exception8d;
 import com.kangli.qms.domain.exception.entity.ExceptionOrder;
 import com.kangli.qms.domain.exception.entity.Escalation;
 import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
+import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
 import com.kangli.qms.domain.exception.entity.ImprovementAction;
 import com.kangli.qms.domain.incoming.entity.MaterialInspection;
 import com.kangli.qms.domain.exception.entity.RectificationPlan;
@@ -29,14 +34,20 @@ import com.kangli.qms.domain.exception.mapper.Exception8dMapper;
 import com.kangli.qms.domain.exception.mapper.ExceptionOrderMapper;
 import com.kangli.qms.domain.exception.mapper.ImprovementActionMapper;
 import com.kangli.qms.domain.fai.mapper.FaiInspectionRecordMapper;
+import com.kangli.qms.domain.finishedgoods.mapper.FinishedGoodsInspectionMapper;
 import com.kangli.qms.domain.incoming.mapper.MaterialInspectionMapper;
 import com.kangli.qms.domain.exception.mapper.RectificationPlanMapper;
 import com.kangli.qms.domain.supplier.mapper.SupplierMapper;
 import com.kangli.qms.domain.auth.mapper.SysUserMapper;
 import com.kangli.qms.domain.exception.mapper.VerificationRecordMapper;
 import com.kangli.qms.service.admin.AuditLogService;
+import com.kangli.qms.service.admin.AdminService;
 import com.kangli.qms.service.exception.ExceptionService;
+import com.kangli.qms.service.notification.NotificationConfigService;
 import com.kangli.qms.service.notification.NotificationService;
+import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
+import com.kangli.qms.service.notification.enums.NotificationTypeEnum;
+import com.kangli.qms.domain.exception.vo.CapaPhaseApprovalReadinessVO;
 import com.kangli.qms.domain.exception.vo.CloseReadinessVO;
 import com.kangli.qms.domain.exception.vo.EightDVO;
 import com.kangli.qms.domain.exception.vo.ExceptionAnalysisItemVO;
@@ -46,6 +57,7 @@ import com.kangli.qms.domain.exception.vo.ExceptionStatsVO;
 import com.kangli.qms.domain.supplier.vo.SupplierExceptionSummaryVO;
 import com.kangli.qms.domain.exception.vo.QualityExceptionDecisionVO;
 import com.kangli.qms.domain.exception.vo.QualityRuleCatalogVO;
+import com.kangli.qms.domain.exception.vo.ExceptionUserOptionVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -93,11 +105,14 @@ public class ExceptionServiceImpl implements ExceptionService {
     private final NotificationService notificationService;
     private final MaterialInspectionMapper materialInspectionMapper;
     private final FaiInspectionRecordMapper faiInspectionRecordMapper;
+    private final FinishedGoodsInspectionMapper finishedGoodsInspectionMapper;
     private final SysUserMapper sysUserMapper;
     private final AuditLogMapper auditLogMapper;
     private final AuditLogService auditLogService;
     private final RectificationPlanMapper rectificationPlanMapper;
     private final QualityExceptionRuleEvaluator qualityRuleEvaluator;
+    private final AdminService adminService;
+    private final NotificationConfigService notificationConfigService;
 
     public ExceptionServiceImpl(ExceptionOrderMapper exceptionOrderMapper,
                                  ImprovementActionMapper improvementActionMapper,
@@ -108,11 +123,14 @@ public class ExceptionServiceImpl implements ExceptionService {
                                  NotificationService notificationService,
                                  MaterialInspectionMapper materialInspectionMapper,
                                  FaiInspectionRecordMapper faiInspectionRecordMapper,
+                                 FinishedGoodsInspectionMapper finishedGoodsInspectionMapper,
                                  SysUserMapper sysUserMapper,
                                  AuditLogMapper auditLogMapper,
                                  AuditLogService auditLogService,
                                  RectificationPlanMapper rectificationPlanMapper,
-                                 QualityExceptionRuleEvaluator qualityRuleEvaluator) {
+                                 QualityExceptionRuleEvaluator qualityRuleEvaluator,
+                                 AdminService adminService,
+                                 NotificationConfigService notificationConfigService) {
         this.exceptionOrderMapper = exceptionOrderMapper;
         this.improvementActionMapper = improvementActionMapper;
         this.verificationRecordMapper = verificationRecordMapper;
@@ -122,11 +140,14 @@ public class ExceptionServiceImpl implements ExceptionService {
         this.notificationService = notificationService;
         this.materialInspectionMapper = materialInspectionMapper;
         this.faiInspectionRecordMapper = faiInspectionRecordMapper;
+        this.finishedGoodsInspectionMapper = finishedGoodsInspectionMapper;
         this.sysUserMapper = sysUserMapper;
         this.auditLogMapper = auditLogMapper;
         this.auditLogService = auditLogService;
         this.rectificationPlanMapper = rectificationPlanMapper;
         this.qualityRuleEvaluator = qualityRuleEvaluator;
+        this.adminService = adminService;
+        this.notificationConfigService = notificationConfigService;
     }
 
     // ===== 分页查询 =====
@@ -136,7 +157,7 @@ public class ExceptionServiceImpl implements ExceptionService {
                                             Long supplierId, String sourceType,
                                             String processType, String capaStatus,
                                             String startDate, String endDate) {
-        String plantCode = getCurrentPlantCode();
+        String plantCode = ExceptionModuleHelper.currentPlantCodeSafe();
         Page<ExceptionOrder> pageObj = new Page<>(page, size);
         LambdaQueryWrapper<ExceptionOrder> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(ExceptionOrder::getPlantCode, plantCode);
@@ -177,7 +198,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         return PageResult.of(pageResult);
     }
 
-    /** 批量回填异常单列表的供应商名称（避免 N+1） */
+    /** 批量回填异常单列表的供应商名称（避免 N+1），supplierId 为 null 时保留已有值 */
     private void fillSupplierNames(List<ExceptionOrder> records) {
         if (records == null || records.isEmpty()) {
             return;
@@ -188,6 +209,7 @@ public class ExceptionServiceImpl implements ExceptionService {
                 .distinct()
                 .collect(Collectors.toList());
         if (ids.isEmpty()) {
+            // supplierId 全部为 null，保留 entity 中已持久化的 supplierName
             return;
         }
         List<Supplier> suppliers = supplierMapper.selectBatchIds(ids);
@@ -198,8 +220,13 @@ public class ExceptionServiceImpl implements ExceptionService {
                 .collect(Collectors.toMap(Supplier::getId, Supplier::getSupplierName, (a, b) -> a));
         records.forEach(r -> {
             if (r.getSupplierId() != null) {
-                r.setSupplierName(nameMap.get(r.getSupplierId()));
+                String lookedUp = nameMap.get(r.getSupplierId());
+                if (lookedUp != null) {
+                    r.setSupplierName(lookedUp);
+                }
+                // 查不到时保留 r.getSupplierName() 已有值（来自持久化字段）
             }
+            // supplierId 为 null：保留 r.getSupplierName() 已有值
         });
     }
 
@@ -258,10 +285,24 @@ public class ExceptionServiceImpl implements ExceptionService {
                 .eq(com.kangli.qms.domain.notification.entity.Notification::getBusinessType, BUSINESS_TYPE_EXCEPTION);
         vo.setNotificationCount((int) notificationService.count(notificationWrapper));
 
-        // 关联来料检验记录
-        if ("来料不良".equals(order.getSourceType()) && order.getSourceId() != null) {
-            MaterialInspection mi = materialInspectionMapper.selectById(order.getSourceId());
-            vo.setMaterialInspection(mi);
+        // 关联来源检验记录
+        if (order.getSourceId() != null) {
+            switch (order.getSourceType()) {
+                case "来料不良":
+                    MaterialInspection mi = materialInspectionMapper.selectById(order.getSourceId());
+                    vo.setMaterialInspection(mi);
+                    break;
+                case "首件不良":
+                    FaiInspectionRecord fai = faiInspectionRecordMapper.selectById(order.getSourceId());
+                    vo.setFaiInspection(fai);
+                    break;
+                case "成品不良":
+                    FinishedGoodsInspection fgi = finishedGoodsInspectionMapper.selectById(order.getSourceId());
+                    vo.setFinishedGoodsInspection(fgi);
+                    break;
+                default:
+                    break;
+            }
         }
 
         // 整改计划（与改善措施区分的独立对象）
@@ -292,11 +333,6 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setUpdatedBy(loginUser.getRealName());
 
         insertExceptionWithRetry(order);
-
-        // 若建单时直接携带 8D 流程且已进入「进行中」，同步自动建 D1 报告
-        if (processIncludes8D(order.getProcessType()) && "进行中".equals(order.getCapaStatus())) {
-            ensureEightDInitialized(order, loginUser);
-        }
         return order;
     }
 
@@ -327,8 +363,9 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setSourceId(inspection.getId());
         order.setSeverity(decision.getSeverity());
         order.setStatus("待整改");
-        order.setCapaStatus("进行中");
-        order.setProcessType(decision.getProcessType());
+        // processType 改为质量部门手动选择（发起时指定），自动建单不预填、不留推荐值
+        order.setCapaStatus("待发起");
+        order.setProcessType(null);
         order.setMaterialCode(inspection.getMaterialCode());
         order.setDefectDesc(inspection.getDefectDesc());
         order.setDefectQty(inspection.getUnqualifiedQty());
@@ -349,7 +386,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setCreatedBy(loginUser.getRealName());
         order.setUpdatedBy(loginUser.getRealName());
 
-        // 根据 supplierCode 查找 supplierId
+        // 根据 supplierCode 查找 supplierId，同时存储 supplierName 做容错
         if (StringUtils.hasText(inspection.getSupplierCode())) {
             LambdaQueryWrapper<Supplier> wrapper = new LambdaQueryWrapper<>();
             wrapper.eq(Supplier::getSupplierCode, inspection.getSupplierCode())
@@ -357,14 +394,18 @@ public class ExceptionServiceImpl implements ExceptionService {
             Supplier supplier = supplierMapper.selectOne(wrapper);
             if (supplier != null) {
                 order.setSupplierId(supplier.getId());
+                order.setSupplierName(supplier.getSupplierName());
+            } else {
+                // supplier 表中未找到时，兜底使用来料检验中的供应商名称
+                order.setSupplierName(inspection.getSupplierName());
             }
+        } else if (StringUtils.hasText(inspection.getSupplierName())) {
+            order.setSupplierName(inspection.getSupplierName());
         }
 
         insertExceptionWithRetry(order);
 
-        if ("8D".equals(decision.getProcessType()) || "BOTH".equals(decision.getProcessType())) {
-            initializeEightD(order, loginUser);
-        }
+        // 8D 报告在质量部门发起（initiate）时按所选流程类型初始化，自动建单阶段不预建
 
         sendExceptionCreatedNotifications(order, loginUser);
         createAutomaticEscalationIfNeeded(order, inspection, loginUser, repeatCount90Days);
@@ -404,7 +445,7 @@ public class ExceptionServiceImpl implements ExceptionService {
     public ExceptionOrder createFromFai(FaiInspectionRecord record, LoginUser loginUser) {
         ExceptionOrder existing = exceptionOrderMapper.selectOne(new LambdaQueryWrapper<ExceptionOrder>()
                 .eq(ExceptionOrder::getSourceId, record.getId())
-                .eq(ExceptionOrder::getSourceType, "首件不合格")
+                .eq(ExceptionOrder::getSourceType, "首件不良")
                 .eq(ExceptionOrder::getIsDeleted, 0));
         if (existing != null) {
             return existing;
@@ -418,7 +459,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         QualityExceptionDecisionVO decision = qualityRuleEvaluator.evaluateFai(record, repeatCount30Days);
 
         ExceptionOrder order = new ExceptionOrder();
-        order.setSourceType("首件不合格");
+        order.setSourceType("首件不良");
         order.setSourceId(record.getId());
         order.setPlantCode(plantCode);
         order.setPlantName(StringUtils.hasText(record.getPlantName())
@@ -426,7 +467,8 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setStatus("待整改");
         order.setCapaStatus("待发起");
         order.setSeverity(decision.getSeverity());
-        order.setProcessType(decision.getProcessType());
+        // processType 改为质量部门手动选择（发起时指定），自动建单不预填
+        order.setProcessType(null);
         order.setNotificationLevel(decision.getNotificationLevel());
         order.setDeadline(LocalDate.now().plusDays(decision.getDeadlineDays()));
         order.setResponseDeadline(LocalDateTime.now(ZoneId.of("Asia/Shanghai")).plusHours(decision.getResponseHours()));
@@ -439,15 +481,68 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setUpdatedBy(loginUser.getRealName());
         insertExceptionWithRetry(order);
 
-        if ("8D".equals(decision.getProcessType()) || "BOTH".equals(decision.getProcessType())) {
-            initializeEightD(order, loginUser);
-        }
+        // 8D 报告在质量部门发起（initiate）时按所选流程类型初始化，自动建单阶段不预建
         sendExceptionCreatedNotifications(order, loginUser);
         auditLogService.record(TABLE_NAME_EXCEPTION, order.getId(), "CREATE", null, order,
-                "首件不合格自动触发；" + decision.getRuleReason());
+                "首件不良自动触发；" + decision.getRuleReason());
 
-        log.info("首件不合格自动建异常单：faiId={}, exceptionNo={}, severity={}, processType={}",
+        log.info("首件不良自动建异常单：faiId={}, exceptionNo={}, severity={}, processType={}",
                 record.getId(), order.getExceptionNo(), order.getSeverity(), order.getProcessType());
+        return order;
+    }
+
+    /**
+     * 根据成品入库检验不合格记录自动生成异常单（对应异常来源「成品不良」）。
+     * 仅在品管审核通过、检验结论为不合格且不合格数量 > 0 时调用；按 reportNo 防重，避免重复建单。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    @Override
+    public ExceptionOrder createFromFinishedGoods(FinishedGoodsInspection inspection, LoginUser loginUser) {
+        ExceptionOrder existing = exceptionOrderMapper.selectOne(new LambdaQueryWrapper<ExceptionOrder>()
+                .eq(ExceptionOrder::getSourceId, inspection.getId())
+                .eq(ExceptionOrder::getSourceType, "成品不良")
+                .eq(ExceptionOrder::getIsDeleted, 0));
+        if (existing != null) {
+            return existing;
+        }
+        String plantCode = StringUtils.hasText(inspection.getPlantCode())
+                ? inspection.getPlantCode() : loginUser.getPlantCode().name();
+
+        QualityExceptionDecisionVO decision = qualityRuleEvaluator.evaluateFinishedGoods(inspection);
+
+        ExceptionOrder order = new ExceptionOrder();
+        order.setSourceType("成品不良");
+        order.setSourceId(inspection.getId());
+        order.setPlantCode(plantCode);
+        order.setPlantName(StringUtils.hasText(inspection.getPlantName())
+                ? inspection.getPlantName() : loginUser.getPlantCode().getChineseName());
+        order.setStatus("待整改");
+        order.setCapaStatus("待发起");
+        // processType 改为质量部门手动选择（发起时指定），自动建单不预填
+        order.setProcessType(null);
+        order.setSeverity(decision.getSeverity());
+        order.setNotificationLevel(decision.getNotificationLevel());
+        order.setMaterialCode(inspection.getMaterialCode());
+        order.setDefectDesc("成品入库检验不合格（报告 " + inspection.getReportNo() + "，"
+                + (inspection.getCategory() != null ? inspection.getCategory() : "成品") + "），需发起整改");
+        order.setDefectQty(inspection.getUnqualifiedQty());
+        order.setTotalQty(inspection.getInspectedQty());
+        order.setDeadline(LocalDate.now().plusDays(decision.getDeadlineDays()));
+        order.setResponseDeadline(LocalDateTime.now(ZoneId.of("Asia/Shanghai")).plusHours(decision.getResponseHours()));
+        order.setRuleReason(decision.getRuleReason());
+        order.setExceptionNo(generateExceptionNo());
+        order.setCreatedBy(loginUser.getRealName());
+        order.setUpdatedBy(loginUser.getRealName());
+
+        insertExceptionWithRetry(order);
+
+        // 8D 报告在质量部门发起（initiate）时按所选流程类型初始化，自动建单阶段不预建
+        sendExceptionCreatedNotifications(order, loginUser);
+        auditLogService.record(TABLE_NAME_EXCEPTION, order.getId(), "CREATE", null, order,
+                "成品不良自动触发；" + decision.getRuleReason());
+
+        log.info("成品不良自动建异常单：finishedGoodsId={}, exceptionNo={}, severity={}, processType={}",
+                inspection.getId(), order.getExceptionNo(), order.getSeverity(), order.getProcessType());
         return order;
     }
 
@@ -531,13 +626,14 @@ public class ExceptionServiceImpl implements ExceptionService {
 
     // ===== 发起整改流程（选择 CAPA / 8D / BOTH） =====
 
-    private static final List<String> VALID_PROCESS_TYPES = List.of("CAPA", "8D", "BOTH");
+    private static final List<String> VALID_PROCESS_TYPES = Arrays.asList("CAPA", "8D", "BOTH");
 
     @Override
     @Transactional
-    public ExceptionOrder initiate(Long id, String processType) {
+    public ExceptionOrder initiate(Long id, ExceptionInitiateDTO dto) {
         // 权限加固：发起整改流程需 R03/R04/R06（R00 超级管理员绕过）
-        assertRole("R03", "R04", "R06");
+        ExceptionModuleHelper.assertRole("R03", "R04", "R06");
+        String processType = dto.getProcessType();
         if (!VALID_PROCESS_TYPES.contains(processType)) {
             throw new BusinessException(ResultCode.BAD_REQUEST,
                     "无效的整改流程类型：" + processType + "（应为 CAPA / 8D / BOTH）");
@@ -551,6 +647,9 @@ public class ExceptionServiceImpl implements ExceptionService {
                     "仅「待发起」状态的异常单可发起流程（当前：" + existing.getCapaStatus() + "）");
         }
 
+        LoginUser loginUser = getCurrentLoginUser();
+        LocalDateTime now = LocalDateTime.now();
+
         ExceptionOrder update = new ExceptionOrder();
         update.setId(id);
         update.setProcessType(processType);
@@ -559,19 +658,133 @@ public class ExceptionServiceImpl implements ExceptionService {
         update.setStatus("整改中");
         // 乐观锁回填：防止并发双开发起互相覆盖 processType
         update.setVersion(existing.getVersion());
-        LoginUser loginUser = getCurrentLoginUser();
         update.setUpdatedBy(loginUser.getRealName());
+        // 记录发起整改的「操作人」及时间（与 updatedBy 区分，便于追溯「谁发起」）
+        update.setInitiatedBy(loginUser.getRealName());
+        update.setInitiatedByUserId(loginUser.getUserId());
+        update.setInitiatedAt(now);
+        // 整改责任人：相关部门从已有人员中选择填写（区别于发起操作人；自动触发单发起时也可补填）
+        update.setOwnerId(dto.getOwnerId());
+        update.setOwnerName(dto.getOwnerName());
+        // 含 8D 流程（8D 或 BOTH）：CAPA 立项阶段，8D 可并行推进 D1-D4
+        // 8D 报告自身也需经 CAPA 根因审批 / 措施审批解锁 D5 / D6
+        if (ExceptionModuleHelper.processIncludes8D(processType)) {
+            update.setCapaPhase(ExceptionConstants.CAPA_PHASE_INITIATE);
+        }
         exceptionOrderMapper.updateById(update);
 
-        // 8D 流程：发起即自动建 D1 报告，避免后续 next-step 查不到记录 404
+        // D0 质量部发起：写发起说明 + 指定负责人，初始化 8D 记录（含 D0，currentStep=D1 等待负责人组建团队）
         existing.setProcessType(processType);
-        ensureEightDInitialized(existing, loginUser);
+        ensureEightDInitialized(existing, loginUser, dto, now);
+
+        // D0 通知：仅通知指定负责人
+        notifyD0Leader(id, existing, dto, loginUser);
 
         // 审计：记录发起整改流程操作
-        auditLogService.record(TABLE_NAME_EXCEPTION, id, ACTION_UPDATE, existing, update, "发起整改流程：" + processType);
+        auditLogService.record(TABLE_NAME_EXCEPTION, id, ACTION_UPDATE, existing, update,
+                "发起整改流程：" + processType + "；指定负责人=" + dto.getOwnerName());
 
-        log.info("发起整改流程：exceptionId={}, processType={}", id, processType);
+        log.info("发起整改流程：exceptionId={}, processType={}, ownerName={}",
+                id, processType, dto.getOwnerName());
         return exceptionOrderMapper.selectById(id);
+    }
+
+    // ===== CAPA 相位审批（BOTH 模式专用） =====
+
+    private static final java.util.List<String> CAPA_PHASE_VALUES = java.util.Arrays.asList(
+            ExceptionConstants.CAPA_PHASE_INITIATE,
+            ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED,
+            ExceptionConstants.CAPA_PHASE_MEASURES_APPROVED,
+            ExceptionConstants.CAPA_PHASE_CLOSED);
+
+    @Override
+    @Transactional
+    public void approveCapaRootCause(Long id, String comment) {
+        approveCapaPhase(id, ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED, "根因分析", comment);
+    }
+
+    @Override
+    @Transactional
+    public void approveCapaMeasures(Long id, String comment) {
+        approveCapaPhase(id, ExceptionConstants.CAPA_PHASE_MEASURES_APPROVED, "措施方案", comment);
+    }
+
+    /**
+     * 统一的 CAPA 相位推进方法。
+     * 校验 BOTH 模式 + 当前相位正确 + 目标相位合法，推进并记录审计日志。
+     */
+    private void approveCapaPhase(Long id, String targetPhase, String phaseLabel, String comment) {
+        ExceptionOrder order = exceptionOrderMapper.selectById(id);
+        if (order == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在：" + id);
+        }
+        if (!ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "仅含 8D 报告（8D / BOTH）的流程需要 CAPA 相位审批，当前流程类型：" + order.getProcessType());
+        }
+
+        // 相位推进校验（不可回退、不可跳步）
+        String currentPhase = order.getCapaPhase() != null ? order.getCapaPhase() : ExceptionConstants.CAPA_PHASE_INITIATE;
+        String allowedFrom;
+        if (ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED.equals(targetPhase)) {
+            allowedFrom = ExceptionConstants.CAPA_PHASE_INITIATE;
+        } else if (ExceptionConstants.CAPA_PHASE_MEASURES_APPROVED.equals(targetPhase)) {
+            allowedFrom = ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED;
+        } else {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "无效的审批目标相位：" + targetPhase);
+        }
+
+        if (!allowedFrom.equals(currentPhase)) {
+            String currentLabel = ExceptionConstants.CAPA_PHASE_INITIATE.equals(currentPhase) ? "CAPA 立项" : "根因已审批";
+            throw new BusinessException(ResultCode.BAD_REQUEST,
+                    "当前 CAPA 相位为「" + currentLabel + "」，不可执行" + phaseLabel + "审批。"
+                            + "审批推进顺序：根因分析 → 根因审批 → 措施审批 → D6-D8 → 验证闭环");
+        }
+
+        ExceptionOrder update = new ExceptionOrder();
+        update.setId(id);
+        update.setCapaPhase(targetPhase);
+        LoginUser loginUser = getCurrentLoginUser();
+        update.setUpdatedBy(loginUser.getRealName());
+
+        exceptionOrderMapper.updateById(update);
+
+        // 审计
+        auditLogService.record(TABLE_NAME_EXCEPTION, id, ACTION_UPDATE, order, update,
+                "CAPA " + phaseLabel + "审批通过：" + comment);
+
+        log.info("CAPA 相位审批：exceptionId={}, phase={}→{}, operator={}, comment={}",
+                id, currentPhase, targetPhase, loginUser.getRealName(), comment);
+
+        // 通知：根因/措施审批通过（配置驱动）
+        String notifCode = ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED.equals(targetPhase)
+                ? NotificationTypeEnum.CAPA_ROOT_CAUSE_APPROVED.getCode()
+                : NotificationTypeEnum.CAPA_MEASURES_APPROVED.getCode();
+        notifyByConfig(order, notifCode,
+                "CAPA " + phaseLabel + "审批通过",
+                "异常单【" + order.getExceptionNo() + "】" + phaseLabel + "审批已通过。审批人："
+                        + loginUser.getRealName() + "，意见：" + (comment != null ? comment : "无"));
+    }
+
+    @Override
+    public List<ExceptionUserOptionVO> listUserOptions() {
+        List<AdminUserVO> users = adminService.listUsers();
+        if (users == null) {
+            return Collections.emptyList();
+        }
+        LoginUser loginUser = getCurrentLoginUser();
+        String plantCode = loginUser != null ? loginUser.getPlantCode().name() : null;
+        return users.stream()
+                // 数据隔离：仅返回当前分公司人员（R00 超级管理员可看全部）
+                .filter(u -> plantCode == null || "R00".equals(loginUser.getRoleCode()) || plantCode.equals(u.getPlantCode()))
+                .map(u -> {
+                    ExceptionUserOptionVO vo = new ExceptionUserOptionVO();
+                    vo.setId(u.getId());
+                    vo.setRealName(u.getRealName());
+                    vo.setRoleCode(u.getRoleCode());
+                    vo.setPlantCode(u.getPlantCode());
+                    return vo;
+                })
+                .collect(Collectors.toList());
     }
 
     // ===== 闭环 =====
@@ -580,7 +793,7 @@ public class ExceptionServiceImpl implements ExceptionService {
     @Transactional
     public void close(Long id, ExceptionCloseDTO dto) {
         // 权限加固：闭环需 R06 质量经理（R00 超级管理员绕过）
-        assertRole("R06");
+        ExceptionModuleHelper.assertRole("R06");
         ExceptionOrder order = exceptionOrderMapper.selectById(id);
         if (order == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在：" + id);
@@ -602,6 +815,10 @@ public class ExceptionServiceImpl implements ExceptionService {
         update.setStatus("已闭环");
         update.setClosedAt(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
         update.setCapaStatus("已完成");
+        // 含 8D 流程（8D 或 BOTH）：CAPA 治理流程闭环
+        if (ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+            update.setCapaPhase(ExceptionConstants.CAPA_PHASE_CLOSED);
+        }
         update.setRemark(order.getRemark() != null ? order.getRemark() + "\n闭环原因：" + dto.getCloseReason() : "闭环原因：" + dto.getCloseReason());
         LoginUser loginUser = getCurrentLoginUser();
         update.setUpdatedBy(loginUser.getRealName());
@@ -613,6 +830,13 @@ public class ExceptionServiceImpl implements ExceptionService {
 
         // 发送状态变更通知
         sendExceptionStatusChangedNotification(order, loginUser, "已闭环");
+
+        // CAPA 闭环通知（BOTH 模式：配置驱动通知发起整改人/质量审核人）
+        if (ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+            notifyByConfig(order, NotificationTypeEnum.CAPA_CLOSED.getCode(),
+                    "CAPA 闭环通知",
+                    "异常单【" + order.getExceptionNo() + "】已完成闭环。操作人：" + loginUser.getRealName());
+        }
 
         log.info("异常单 {} 已闭环，操作人：{}", id, loginUser.getRealName());
     }
@@ -634,162 +858,245 @@ public class ExceptionServiceImpl implements ExceptionService {
         return result;
     }
 
+    // ===== CAPA 相位审批就绪检查 =====
+
+    @Override
+    public CapaPhaseApprovalReadinessVO capaPhaseApprovalReadiness(Long id) {
+        ExceptionOrder order = exceptionOrderMapper.selectById(id);
+        if (order == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在：" + id);
+        }
+        if (!ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+            return CapaPhaseApprovalReadinessVO.cannotApprove(order.getCapaPhase(),
+                    "非 BOTH 模式，无需 CAPA 相位审批");
+        }
+        String phase = order.getCapaPhase();
+        LoginUser loginUser = LoginUserHolder.get();
+        if (loginUser == null) {
+            return CapaPhaseApprovalReadinessVO.cannotApprove(phase, "无法获取当前登录用户");
+        }
+
+        // 只有发起整改人（质量审核人）可以审批
+        boolean isInitiator = loginUser.getUserId().equals(order.getInitiatedByUserId());
+
+        if (ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED.equals(phase)) {
+            if (isInitiator) {
+                return CapaPhaseApprovalReadinessVO.canApprove(phase, "待根因审批");
+            }
+            return CapaPhaseApprovalReadinessVO.cannotApprove(phase,
+                    "仅发起整改人可审批根因，当前用户：" + loginUser.getRealName());
+        }
+
+        if (ExceptionConstants.CAPA_PHASE_MEASURES_APPROVED.equals(phase)) {
+            if (isInitiator) {
+                return CapaPhaseApprovalReadinessVO.canApprove(phase, "待措施审批");
+            }
+            return CapaPhaseApprovalReadinessVO.cannotApprove(phase,
+                    "仅发起整改人可审批措施，当前用户：" + loginUser.getRealName());
+        }
+
+        if (ExceptionConstants.CAPA_PHASE_CLOSED.equals(phase)) {
+            return CapaPhaseApprovalReadinessVO.cannotApprove(phase, "CAPA 相位已闭环，无需审批");
+        }
+
+        return CapaPhaseApprovalReadinessVO.cannotApprove(phase,
+                "当前相位（" + phase + "）无需审批，请检查 8D 步骤是否已正确推进");
+    }
+
     /**
-     * 统一的闭环前置条件校验（close 与 closeReadiness 共用，杜绝逻辑漂移）。
-     * 返回每项检查明细；status 为 PASS/FAIL/NA，detail 为说明。
+     * 统一的闭环前置条件校验：5 项检查，每项返回 PASS/FAIL/NA + 说明。
      */
     private List<CloseReadinessVO.CheckItem> evaluateCloseChecks(ExceptionOrder order) {
-        Long id = order.getId();
         List<CloseReadinessVO.CheckItem> checks = new ArrayList<>();
-
-        // 1. 整改流程是否已发起
-        {
-            CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
-            item.setItem("整改流程");
-            if (order.getProcessType() != null && !"待发起".equals(order.getCapaStatus())) {
-                item.setStatus("PASS");
-                item.setDetail("已发起（" + order.getProcessType() + "，" + order.getCapaStatus() + "）");
-            } else {
-                item.setStatus("FAIL");
-                item.setDetail("尚未发起整改流程");
-            }
-            checks.add(item);
-        }
-
-        // 2. 整改计划（CAPA/BOTH 需要）
-        {
-            CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
-            item.setItem("整改计划");
-            LambdaQueryWrapper<RectificationPlan> planWrapper = new LambdaQueryWrapper<>();
-            planWrapper.eq(RectificationPlan::getExceptionId, id);
-            List<RectificationPlan> plans = rectificationPlanMapper.selectList(planWrapper);
-            long planTotal = plans.size();
-            long planDone = plans.stream().filter(p -> "已完成".equals(p.getStatus())).count();
-            boolean capaOrBoth = order.getProcessType() != null
-                    && (order.getProcessType().equals("CAPA") || order.getProcessType().equals("BOTH"));
-            if (!capaOrBoth && planTotal == 0) {
-                item.setStatus("NA");
-                item.setDetail("纯8D模式，不需要整改计划");
-            } else if (planTotal == 0) {
-                item.setStatus("FAIL");
-                item.setDetail("尚未制定整改计划");
-            } else if (planDone >= planTotal) {
-                item.setStatus("PASS");
-                item.setDetail(planDone + "/" + planTotal + " 已完成");
-            } else {
-                item.setStatus("FAIL");
-                item.setDetail(planDone + "/" + planTotal + " 已完成");
-            }
-            checks.add(item);
-        }
-
-        // 3. 改善措施（全部 DONE 才通过）
-        {
-            CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
-            item.setItem("改善措施");
-            LambdaQueryWrapper<ImprovementAction> actionWrapper = new LambdaQueryWrapper<>();
-            actionWrapper.eq(ImprovementAction::getExceptionId, id);
-            List<ImprovementAction> actions = improvementActionMapper.selectList(actionWrapper);
-            long actionTotal = actions.size();
-            long actionDone = actions.stream().filter(a -> "DONE".equals(a.getStatus())).count();
-            if (actionTotal == 0) {
-                item.setStatus("FAIL");
-                item.setDetail("尚无改善措施");
-            } else if (actionDone >= actionTotal) {
-                item.setStatus("PASS");
-                item.setDetail(actionDone + "/" + actionTotal + " DONE");
-            } else {
-                item.setStatus("FAIL");
-                item.setDetail(actionDone + "/" + actionTotal + " DONE，" + (actionTotal - actionDone) + "条PENDING");
-            }
-            checks.add(item);
-        }
-
-        // 4. 验证记录（最新一条须通过，且验证日期须晚于所有改善措施完成时间、验证人非空）
-        {
-            CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
-            item.setItem("验证记录");
-            LambdaQueryWrapper<VerificationRecord> verifyWrapper = new LambdaQueryWrapper<>();
-            verifyWrapper.eq(VerificationRecord::getExceptionId, id)
-                    .orderByDesc(VerificationRecord::getVerifyDate)
-                    .orderByDesc(VerificationRecord::getId);
-            List<VerificationRecord> verifs = verificationRecordMapper.selectList(verifyWrapper);
-            if (verifs.isEmpty()) {
-                item.setStatus("FAIL");
-                item.setDetail("尚无验证记录");
-            } else {
-                VerificationRecord latest = verifs.get(0);
-                if (!"通过".equals(latest.getResult())) {
-                    item.setStatus("FAIL");
-                    item.setDetail(verifs.size() + "条验证，最新结果「不通过」");
-                } else if (latest.getVerifierName() == null || latest.getVerifierName().trim().isEmpty()) {
-                    item.setStatus("FAIL");
-                    item.setDetail("最新验证结果「通过」，但验证人为空");
-                } else {
-                    // 时序校验：最新验证日期须晚于所有已完成改善措施的完成时间
-                    LocalDate verifyDate = latest.getVerifyDate();
-                    boolean timingOk = true;
-                    LambdaQueryWrapper<ImprovementAction> actionWrapper = new LambdaQueryWrapper<>();
-                    actionWrapper.eq(ImprovementAction::getExceptionId, id)
-                            .eq(ImprovementAction::getStatus, "DONE");
-                    List<ImprovementAction> doneActions = improvementActionMapper.selectList(actionWrapper);
-                    for (ImprovementAction act : doneActions) {
-                        if (act.getCompletedAt() != null && verifyDate != null
-                                && verifyDate.isBefore(act.getCompletedAt().toLocalDate())) {
-                            timingOk = false;
-                            break;
-                        }
-                    }
-                    if (!timingOk) {
-                        item.setStatus("FAIL");
-                        item.setDetail("验证日期早于改善措施完成时间，时序不合规");
-                    } else {
-                        item.setStatus("PASS");
-                        item.setDetail(verifs.size() + "条验证，最新结果「通过」");
-                    }
-                }
-            }
-            checks.add(item);
-        }
-
-        // 5. 8D 报告
-        {
-            CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
-            item.setItem("8D报告");
-            if (order.getProcessType() == null || !processIncludes8D(order.getProcessType())) {
-                item.setStatus("NA");
-                item.setDetail("未启用8D流程");
-            } else {
-                Exception8d eightD = exception8dMapper.selectByExceptionId(id);
-                if (eightD == null) {
-                    item.setStatus("FAIL");
-                    item.setDetail("8D 报告未创建");
-                } else if (!"D8".equals(eightD.getCurrentStep())) {
-                    item.setStatus("FAIL");
-                    item.setDetail("当前步骤：" + eightD.getCurrentStep() + "，需走完 D8");
-                } else {
-                    List<String> unfilledDSteps = new ArrayList<>();
-                    if (eightD.getD1Team() == null || eightD.getD1Team().trim().isEmpty()) unfilledDSteps.add("D1");
-                    if (eightD.getD2ProblemDesc() == null || eightD.getD2ProblemDesc().trim().isEmpty()) unfilledDSteps.add("D2");
-                    if (eightD.getD3Containment() == null || eightD.getD3Containment().trim().isEmpty()) unfilledDSteps.add("D3");
-                    if (eightD.getD4RootCause() == null || eightD.getD4RootCause().trim().isEmpty()) unfilledDSteps.add("D4");
-                    if (eightD.getD5Corrective() == null || eightD.getD5Corrective().trim().isEmpty()) unfilledDSteps.add("D5");
-                    if (eightD.getD6Implementation() == null || eightD.getD6Implementation().trim().isEmpty()) unfilledDSteps.add("D6");
-                    if (eightD.getD7Preventive() == null || eightD.getD7Preventive().trim().isEmpty()) unfilledDSteps.add("D7");
-                    if (eightD.getD8Closure() == null || eightD.getD8Closure().trim().isEmpty()) unfilledDSteps.add("D8");
-                    if (!unfilledDSteps.isEmpty()) {
-                        item.setStatus("FAIL");
-                        item.setDetail("D8已到达，但以下步骤未填写：" + String.join("、", unfilledDSteps));
-                    } else {
-                        item.setStatus("PASS");
-                        item.setDetail("8D D1~D8 全部完成");
-                    }
-                }
-            }
-            checks.add(item);
-        }
-
+        checks.add(checkRectificationProcess(order));
+        checks.add(checkRectificationPlans(order));
+        checks.add(checkImprovementActions(order));
+        checks.add(checkVerificationRecords(order));
+        checks.add(check8DReport(order));
         return checks;
+    }
+
+    /** 检查 1：整改流程是否已发起 */
+    private CloseReadinessVO.CheckItem checkRectificationProcess(ExceptionOrder order) {
+        CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
+        item.setItem("整改流程");
+        if (order.getProcessType() != null && !"待发起".equals(order.getCapaStatus())) {
+            item.setStatus("PASS");
+            item.setDetail("已发起（" + order.getProcessType() + "，" + order.getCapaStatus() + "）");
+        } else {
+            item.setStatus("FAIL");
+            item.setDetail("尚未发起整改流程");
+        }
+        return item;
+    }
+
+    /** 检查 2：整改计划（CAPA/BOTH 模式需要） */
+    private CloseReadinessVO.CheckItem checkRectificationPlans(ExceptionOrder order) {
+        Long id = order.getId();
+        CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
+        item.setItem("整改计划");
+
+        LambdaQueryWrapper<RectificationPlan> planWrapper = new LambdaQueryWrapper<>();
+        planWrapper.eq(RectificationPlan::getExceptionId, id);
+        List<RectificationPlan> plans = rectificationPlanMapper.selectList(planWrapper);
+        long planTotal = plans.size();
+        long planDone = plans.stream().filter(p -> "已完成".equals(p.getStatus())).count();
+
+        boolean capaOrBoth = order.getProcessType() != null
+                && (ExceptionConstants.PROCESS_CAPA.equals(order.getProcessType())
+                    || ExceptionConstants.PROCESS_BOTH.equals(order.getProcessType()));
+
+        if (!capaOrBoth && planTotal == 0) {
+            item.setStatus("NA");
+            item.setDetail("纯8D模式，不需要整改计划");
+        } else if (planTotal == 0) {
+            item.setStatus("FAIL");
+            item.setDetail("尚未制定整改计划");
+        } else if (planDone >= planTotal) {
+            item.setStatus("PASS");
+            item.setDetail(planDone + "/" + planTotal + " 已完成");
+        } else {
+            item.setStatus("FAIL");
+            item.setDetail(planDone + "/" + planTotal + " 已完成");
+        }
+        return item;
+    }
+
+    /** 检查 3：改善措施（全部 DONE 才通过） */
+    private CloseReadinessVO.CheckItem checkImprovementActions(ExceptionOrder order) {
+        Long id = order.getId();
+        CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
+        item.setItem("改善措施");
+
+        LambdaQueryWrapper<ImprovementAction> actionWrapper = new LambdaQueryWrapper<>();
+        actionWrapper.eq(ImprovementAction::getExceptionId, id);
+        List<ImprovementAction> actions = improvementActionMapper.selectList(actionWrapper);
+        long actionTotal = actions.size();
+        long actionDone = actions.stream().filter(a -> ExceptionConstants.ACTION_STATUS_DONE.equals(a.getStatus())).count();
+
+        if (actionTotal == 0) {
+            item.setStatus("FAIL");
+            item.setDetail("尚无改善措施");
+        } else if (actionDone >= actionTotal) {
+            item.setStatus("PASS");
+            item.setDetail(actionDone + "/" + actionTotal + " DONE");
+        } else {
+            item.setStatus("FAIL");
+            item.setDetail(actionDone + "/" + actionTotal + " DONE，" + (actionTotal - actionDone) + "条PENDING");
+        }
+        return item;
+    }
+
+    /** 检查 4：验证记录（最新一条须通过 + 时序合规） */
+    private CloseReadinessVO.CheckItem checkVerificationRecords(ExceptionOrder order) {
+        Long id = order.getId();
+        CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
+        item.setItem("验证记录");
+
+        LambdaQueryWrapper<VerificationRecord> verifyWrapper = new LambdaQueryWrapper<>();
+        verifyWrapper.eq(VerificationRecord::getExceptionId, id)
+                .orderByDesc(VerificationRecord::getVerifyDate)
+                .orderByDesc(VerificationRecord::getId);
+        List<VerificationRecord> verifs = verificationRecordMapper.selectList(verifyWrapper);
+
+        if (verifs.isEmpty()) {
+            item.setStatus("FAIL");
+            item.setDetail("尚无验证记录");
+            return item;
+        }
+
+        VerificationRecord latest = verifs.get(0);
+        if (!"通过".equals(latest.getResult())) {
+            item.setStatus("FAIL");
+            item.setDetail(verifs.size() + "条验证，最新结果「不通过」");
+        } else if (latest.getVerifierName() == null || latest.getVerifierName().trim().isEmpty()) {
+            item.setStatus("FAIL");
+            item.setDetail("最新验证结果「通过」，但验证人为空");
+        } else if (!verifyTimingCompliant(id, latest.getVerifyDate())) {
+            item.setStatus("FAIL");
+            item.setDetail("验证日期早于改善措施完成时间，时序不合规");
+        } else {
+            item.setStatus("PASS");
+            item.setDetail(verifs.size() + "条验证，最新结果「通过」");
+        }
+        return item;
+    }
+
+    /** 检查验证时序：验证日期须晚于所有已完成改善措施的完成时间 */
+    private boolean verifyTimingCompliant(Long exceptionId, LocalDate verifyDate) {
+        LambdaQueryWrapper<ImprovementAction> actionWrapper = new LambdaQueryWrapper<>();
+        actionWrapper.eq(ImprovementAction::getExceptionId, exceptionId)
+                .eq(ImprovementAction::getStatus, ExceptionConstants.ACTION_STATUS_DONE);
+        List<ImprovementAction> doneActions = improvementActionMapper.selectList(actionWrapper);
+        for (ImprovementAction act : doneActions) {
+            if (act.getCompletedAt() != null && verifyDate != null
+                    && verifyDate.isBefore(act.getCompletedAt().toLocalDate())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 检查 5：8D 报告（含 8D 时须 D1~D8 全部完成） */
+    private CloseReadinessVO.CheckItem check8DReport(ExceptionOrder order) {
+        Long id = order.getId();
+        CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
+        item.setItem("8D报告");
+
+        if (order.getProcessType() == null || !ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+            item.setStatus("NA");
+            item.setDetail("未启用8D流程");
+            return item;
+        }
+
+        Exception8d eightD = exception8dMapper.selectByExceptionId(id);
+        if (eightD == null) {
+            item.setStatus("FAIL");
+            item.setDetail("8D 报告未创建");
+            return item;
+        }
+        if (!ExceptionConstants.D8.equals(eightD.getCurrentStep())) {
+            item.setStatus("FAIL");
+            item.setDetail("当前步骤：" + eightD.getCurrentStep() + "，需走完 D8");
+            return item;
+        }
+
+        // BOTH 模式：除 D8 完成外，CAPA 治理流程必须已完成根因+措施审批（相位到达 MEASURES_APPROVED）
+        if (ExceptionConstants.PROCESS_BOTH.equals(order.getProcessType())
+                && !ExceptionConstants.CAPA_PHASE_MEASURES_APPROVED.equals(order.getCapaPhase())) {
+            item.setStatus("FAIL");
+            item.setDetail("BOTH 模式要求 CAPA 治理流程已完成根因审批→措施审批，当前相位："
+                    + (order.getCapaPhase() != null ? order.getCapaPhase() : "未设置"));
+            return item;
+        }
+
+        List<String> unfilled = findUnfilled8DSteps(eightD);
+        if (!unfilled.isEmpty()) {
+            item.setStatus("FAIL");
+            item.setDetail("D8已到达，但以下步骤未填写：" + String.join("、", unfilled));
+        } else {
+            item.setStatus("PASS");
+            item.setDetail("8D D1~D8 全部完成");
+        }
+        return item;
+    }
+
+    /** 查找 8D 报告中未填写的步骤 */
+    private List<String> findUnfilled8DSteps(Exception8d eightD) {
+        List<String> unfilled = new ArrayList<>();
+        if (isBlankStepContent(eightD.getD1Members()) && isBlankStepContent(eightD.getD1Team())) unfilled.add("D1");
+        if (isBlankStepContent(eightD.getD2ProblemDesc())) unfilled.add("D2");
+        if (isBlankStepContent(eightD.getD3Containment())) unfilled.add("D3");
+        if (isBlankStepContent(eightD.getD4RootCause())) unfilled.add("D4");
+        if (isBlankStepContent(eightD.getD5Corrective())) unfilled.add("D5");
+        if (isBlankStepContent(eightD.getD6Implementation())) unfilled.add("D6");
+        if (isBlankStepContent(eightD.getD7Preventive())) unfilled.add("D7");
+        if (isBlankStepContent(eightD.getD8Closure())) unfilled.add("D8");
+        return unfilled;
+    }
+
+    private boolean isBlankStepContent(String content) {
+        return content == null || content.trim().isEmpty();
     }
 
     /**
@@ -883,12 +1190,13 @@ public class ExceptionServiceImpl implements ExceptionService {
                 .set(ExceptionOrder::getStatus, "待整改")
                 .set(ExceptionOrder::getCapaStatus, "待发起")
                 .set(ExceptionOrder::getProcessType, null)
+                .set(ExceptionOrder::getCapaPhase, null)
                 .set(ExceptionOrder::getClosedAt, null)
                 .set(ExceptionOrder::getUpdatedBy, loginUser.getRealName()));
 
         // 审计
         auditLogService.record(TABLE_NAME_EXCEPTION, id, ACTION_UPDATE, order,
-                "status=待整改 capaStatus=待发起 processType=NULL closedAt=NULL", "重置为最初状态（手动测试）");
+                "status=待整改 capaStatus=待发起 processType=NULL capaPhase=NULL closedAt=NULL", "重置为最初状态（手动测试）");
 
         log.info("异常单 {} 已重置为最初状态，操作人：{}", id, loginUser.getRealName());
     }
@@ -964,7 +1272,7 @@ public class ExceptionServiceImpl implements ExceptionService {
 
     @Override
     public ExceptionStatsVO stats() {
-        String plantCode = getCurrentPlantCode();
+        String plantCode = ExceptionModuleHelper.currentPlantCodeSafe();
         ExceptionStatsVO stats = exceptionOrderMapper.selectStats(plantCode);
         if (stats == null) {
             stats = new ExceptionStatsVO();
@@ -986,7 +1294,7 @@ public class ExceptionServiceImpl implements ExceptionService {
 
     @Override
     public ExceptionAnalysisVO analysis(String dimension) {
-        String plantCode = getCurrentPlantCode();
+        String plantCode = ExceptionModuleHelper.currentPlantCodeSafe();
         List<ExceptionAnalysisItemVO> items = exceptionOrderMapper.selectAnalysis(plantCode, dimension);
 
         // 计算 ratio
@@ -1012,10 +1320,12 @@ public class ExceptionServiceImpl implements ExceptionService {
     @Override
     public List<SupplierExceptionSummaryVO> supplierSummary(Long supplierId, String startDate, String endDate,
                                                               Integer minCount) {
-        String plantCode = getCurrentPlantCode();
+        String plantCode = ExceptionModuleHelper.currentPlantCodeSafe();
         List<SupplierExceptionSummaryVO> list = exceptionOrderMapper.selectSupplierSummary(
                 plantCode, supplierId, startDate, endDate, minCount != null ? minCount : 1);
 
+        // 过滤 supplier_id 为空的记录（未关联供应商的异常单不应出现在供应商频次汇总中）
+        list.removeIf(vo -> vo.getSupplierName() == null || vo.getSupplierName().isEmpty());
         for (SupplierExceptionSummaryVO vo : list) {
             if (vo.getRelatedExceptionIdsStr() != null && !vo.getRelatedExceptionIdsStr().isEmpty()) {
                 vo.setRelatedExceptionIds(
@@ -1035,21 +1345,29 @@ public class ExceptionServiceImpl implements ExceptionService {
 
     private void sendExceptionCreatedNotifications(ExceptionOrder order, LoginUser loginUser) {
         try {
-            List<String> roleCodes = new ArrayList<>(Arrays.asList("R02", "R05"));
-            if ("严重".equals(order.getSeverity())) {
-                roleCodes.add("R06");
-                roleCodes.add("R07");
+            String scenarioCode = NotificationTypeEnum.EXCEPTION_CREATED.getCode();
+            List<String> roleCodes = notificationConfigService.getReceivingRoleCodes(scenarioCode);
+            if (roleCodes.isEmpty()) {
+                return;
             }
-            List<SysUser> recipients = sysUserMapper.selectList(new LambdaQueryWrapper<SysUser>()
-                    .eq(SysUser::getPlantCode, order.getPlantCode())
-                    .eq(SysUser::getStatus, (short) 1)
-                    .in(SysUser::getRoleCode, roleCodes));
 
-            List<Long> recipientIds = recipients.stream()
-                    .map(SysUser::getId)
-                    .filter(Objects::nonNull)
-                    .distinct()
-                    .collect(Collectors.toCollection(ArrayList::new));
+            // 严重等级追加角色
+            if ("严重".equals(order.getSeverity())) {
+                List<String> extraRoles = notificationConfigService.getSeverityExtraRoleCodes(scenarioCode);
+                if (!extraRoles.isEmpty()) {
+                    roleCodes = new ArrayList<>(roleCodes);
+                    for (String er : extraRoles) {
+                        if (!roleCodes.contains(er)) {
+                            roleCodes.add(er);
+                        }
+                    }
+                }
+            }
+
+            List<Long> recipientIds = notificationConfigService.listUserIdsByRoleCodes(roleCodes, order.getPlantCode());
+            if (recipientIds.isEmpty()) {
+                return;
+            }
             if (loginUser.getUserId() != null && !recipientIds.contains(loginUser.getUserId())) {
                 recipientIds.add(loginUser.getUserId());
             }
@@ -1057,12 +1375,12 @@ public class ExceptionServiceImpl implements ExceptionService {
             for (Long userId : recipientIds) {
                 NotificationCreateDTO dto = new NotificationCreateDTO();
                 dto.setUserId(userId);
-                dto.setType("EXCEPTION_CREATED");
+                dto.setType(NotificationTypeEnum.EXCEPTION_CREATED.getCode());
                 dto.setLevel(order.getNotificationLevel());
                 dto.setTitle(("严重".equals(order.getSeverity()) ? "【严重】" : "")
                         + "新异常单 " + order.getExceptionNo());
                 dto.setContent("判定：" + order.getRuleReason()
-                        + "；系统已发起" + order.getProcessType()
+                        + "；待质量部门发起整改"
                         + "；整改截止：" + order.getDeadline());
                 dto.setBusinessType(BUSINESS_TYPE_EXCEPTION);
                 dto.setBusinessId(order.getId());
@@ -1073,6 +1391,83 @@ public class ExceptionServiceImpl implements ExceptionService {
         } catch (Exception e) {
             log.warn("发送异常单创建通知失败：exceptionId={}", order.getId(), e);
         }
+    }
+
+    /**
+     * D0 指定负责人通知：发起整改时通知指定的整改负责人，提示其进入 D1 组建团队。
+     * 同时按场景配置抄送额外角色。
+     */
+    private void notifyD0Leader(Long exceptionId, ExceptionOrder order, ExceptionInitiateDTO dto, LoginUser loginUser) {
+        try {
+            if (dto.getOwnerId() == null) {
+                return;
+            }
+
+            String scenarioCode = NotificationTypeEnum.EIGHT_D_LEADER_ASSIGNED.getCode();
+            String level = "提醒";
+            String title = "整改任务指派：" + order.getExceptionNo();
+            String content = "您被指定为异常单 " + order.getExceptionNo()
+                    + " 的整改负责人（流程：" + dto.getProcessType() + "），请在 D1 阶段组建团队。";
+
+            // 1. 点对点通知被指派人
+            NotificationCreateDTO n = new NotificationCreateDTO();
+            n.setUserId(dto.getOwnerId());
+            n.setType(scenarioCode);
+            n.setLevel(level);
+            n.setTitle(title);
+            n.setContent(content);
+            n.setBusinessType(BUSINESS_TYPE_EXCEPTION);
+            n.setBusinessId(exceptionId);
+            n.setPlantCode(order.getPlantCode());
+            n.setCreatedBy(loginUser.getRealName());
+            notificationService.createNotification(n);
+
+            // 2. 按通知配置抄送额外角色（跳过被指派人，避免重复）
+            List<String> ccRoles = notificationConfigService.getReceivingRoleCodes(scenarioCode);
+            if (!ccRoles.isEmpty()) {
+                List<Long> ccUserIds = notificationConfigService.listUserIdsByRoleCodes(ccRoles, order.getPlantCode());
+                for (Long ccUserId : ccUserIds) {
+                    if (ccUserId.equals(dto.getOwnerId())) {
+                        continue;
+                    }
+                    NotificationCreateDTO cc = new NotificationCreateDTO();
+                    cc.setUserId(ccUserId);
+                    cc.setType(scenarioCode);
+                    cc.setLevel(level);
+                    cc.setTitle("【抄送】" + title);
+                    cc.setContent(content + "（通知对象：" + dto.getOwnerName() + "）");
+                    cc.setBusinessType(BUSINESS_TYPE_EXCEPTION);
+                    cc.setBusinessId(exceptionId);
+                    cc.setPlantCode(order.getPlantCode());
+                    cc.setCreatedBy(loginUser.getRealName());
+                    notificationService.createNotification(cc);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("发送 D0 负责人通知失败：exceptionId={}", exceptionId, e);
+        }
+    }
+
+    /**
+     * 解析 JSON 数组字符串为姓名列表（["张三","李四"] → [张三, 李四]）。
+     */
+    private List<String> parseNameList(String json) {
+        List<String> result = new ArrayList<>();
+        if (!StringUtils.hasText(json)) return result;
+        String trimmed = json.trim();
+        if (trimmed.startsWith("[")) {
+            trimmed = trimmed.substring(1);
+        }
+        if (trimmed.endsWith("]")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        for (String s : trimmed.split(",")) {
+            s = s.trim().replace("\"", "").replace("'", "");
+            if (StringUtils.hasText(s)) {
+                result.add(s);
+            }
+        }
+        return result;
     }
 
     private int countRecentUnqualified(MaterialInspection inspection, String plantCode,
@@ -1093,10 +1488,24 @@ public class ExceptionServiceImpl implements ExceptionService {
         return plantCode + "|" + inspection.getSupplierCode().trim() + "|" + inspection.getMaterialCode().trim();
     }
 
-    private void initializeEightD(ExceptionOrder order, LoginUser loginUser) {
+    private void initializeEightD(ExceptionOrder order, LoginUser loginUser,
+                                   ExceptionInitiateDTO dto, LocalDateTime initiateTime) {
         Exception8d eightD = new Exception8d();
         eightD.setExceptionId(order.getId());
+        // D0 质量部发起：立案说明 + 发起人 + 发起时间 + 指定负责人
+        // currentStep=D1：等待指定负责人自行组建团队并提交质量部审核
         eightD.setCurrentStep("D1");
+        eightD.setStepStatus("DRAFT");
+        eightD.setD0Symptom(dto.getD0Symptom());
+        eightD.setD0Initiator(dto.getD0Initiator() != null ? dto.getD0Initiator() : loginUser.getRealName());
+        eightD.setD0InitiateTime(initiateTime);
+        // 发起时指定的 8D 团队 / CAPA 负责人同步预填进 8D 报告（避免与异常单详情指派不一致）
+        eightD.setD1Team(dto.getD1Team());
+        eightD.setCapaOwner(dto.getCapaOwner());
+        // 选 CAPA / BOTH 时维护 CAPA 当前阶段 C1
+        if ("CAPA".equals(order.getProcessType()) || "BOTH".equals(order.getProcessType())) {
+            eightD.setCapaCurrentStep("C1");
+        }
         eightD.setPlantCode(order.getPlantCode());
         eightD.setPlantName(order.getPlantName());
         eightD.setCreatedBy(loginUser.getRealName());
@@ -1106,11 +1515,12 @@ public class ExceptionServiceImpl implements ExceptionService {
 
     /**
      * 幂等确保 8D 报告存在：仅当 processType 含 8D 时生效。
-     * ① 已存在则跳过；② 已软删除则恢复为 D1（避免 exception_id 唯一索引冲突）；
-     * ③ 不存在则新建 D1。供发起流程 / 建单等多入口安全复用。
+     * ① 已存在则跳过；② 已软删除则恢复为 D1 初始状态；
+     * ③ 不存在则新建 D0（含发起说明与指定负责人）。供发起流程入口安全复用。
      */
-    private void ensureEightDInitialized(ExceptionOrder order, LoginUser loginUser) {
-        if (!processIncludes8D(order.getProcessType())) {
+    private void ensureEightDInitialized(ExceptionOrder order, LoginUser loginUser,
+                                         ExceptionInitiateDTO dto, LocalDateTime initiateTime) {
+        if (!ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
             return;
         }
         Exception8d existing = exception8dMapper.selectByExceptionId(order.getId());
@@ -1119,10 +1529,12 @@ public class ExceptionServiceImpl implements ExceptionService {
         }
         Exception8d deleted = exception8dMapper.selectByExceptionIdIgnoreDeleted(order.getId());
         if (deleted != null) {
-            // 已软删除则恢复为初始 D1 状态
+            // 已软删除则恢复为初始 D1 状态（保留发起阶段填写的 D0 立案信息与已指派团队）
             exception8dMapper.restoreDeletedById(deleted.getId());
             deleted.setCurrentStep("D1");
+            deleted.setStepStatus("DRAFT");
             deleted.setD1Team(null);
+            deleted.setD1Members(null);
             deleted.setD2ProblemDesc(null);
             deleted.setD3Containment(null);
             deleted.setD4RootCause(null);
@@ -1130,12 +1542,15 @@ public class ExceptionServiceImpl implements ExceptionService {
             deleted.setD6Implementation(null);
             deleted.setD7Preventive(null);
             deleted.setD8Closure(null);
+            // 保留 D0 立案说明与发起责任人、发起时指派的 8D 团队/CAPA 负责人
+            deleted.setCapaOwner(deleted.getCapaOwner());
+            deleted.setCapaCurrentStep("CAPA".equals(order.getProcessType()) || "BOTH".equals(order.getProcessType()) ? "C1" : null);
             deleted.setIsDeleted((short) 0);
             deleted.setUpdatedBy(loginUser.getRealName());
             exception8dMapper.updateById(deleted);
             return;
         }
-        initializeEightD(order, loginUser);
+        initializeEightD(order, loginUser, dto, initiateTime);
     }
 
     private void createAutomaticEscalationIfNeeded(ExceptionOrder order, MaterialInspection inspection,
@@ -1191,52 +1606,59 @@ public class ExceptionServiceImpl implements ExceptionService {
     }
 
     private void sendEscalationNotifications(Escalation escalation, LoginUser loginUser) {
-        List<SysUser> recipients = sysUserMapper.selectList(new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getPlantCode, escalation.getPlantCode())
-                .eq(SysUser::getStatus, (short) 1)
-                .in(SysUser::getRoleCode, Arrays.asList("R05", "R06", "R07")));
-        for (SysUser user : recipients) {
-            NotificationCreateDTO dto = new NotificationCreateDTO();
-            dto.setUserId(user.getId());
-            dto.setType("ESCALATION_TRIGGERED");
-            dto.setLevel("严重");
-            dto.setTitle("供应商重复问题待升级审核");
-            dto.setContent(escalation.getEscalationReason() + "；建议措施：" + escalation.getEscalationAction());
-            dto.setBusinessType("ESCALATION");
-            dto.setBusinessId(escalation.getId());
-            dto.setPlantCode(escalation.getPlantCode());
-            dto.setCreatedBy(loginUser.getRealName());
-            notificationService.createNotification(dto);
+        try {
+            String scenarioCode = NotificationTypeEnum.ESCALATION_TRIGGERED.getCode();
+            List<String> roleCodes = notificationConfigService.getReceivingRoleCodes(scenarioCode);
+            if (roleCodes.isEmpty()) {
+                return;
+            }
+            List<Long> userIds = notificationConfigService.listUserIdsByRoleCodes(roleCodes, escalation.getPlantCode());
+            for (Long userId : userIds) {
+                NotificationCreateDTO dto = new NotificationCreateDTO();
+                dto.setUserId(userId);
+                dto.setType(scenarioCode);
+                dto.setLevel("严重");
+                dto.setTitle("供应商重复问题待升级审核");
+                dto.setContent(escalation.getEscalationReason() + "；建议措施：" + escalation.getEscalationAction());
+                dto.setBusinessType("ESCALATION");
+                dto.setBusinessId(escalation.getId());
+                dto.setPlantCode(escalation.getPlantCode());
+                dto.setCreatedBy(loginUser.getRealName());
+                notificationService.createNotification(dto);
+            }
+        } catch (Exception e) {
+            log.warn("发送升级通知失败：escalationId={}", escalation.getId(), e);
         }
     }
 
     private void sendExceptionStatusChangedNotification(ExceptionOrder order, LoginUser loginUser, String newStatus) {
         try {
-            if ("\u5df2\u95ed\u73af".equals(newStatus)) {
-                List<SysUser> managers = sysUserMapper.selectList(new LambdaQueryWrapper<SysUser>()
-                        .eq(SysUser::getPlantCode, order.getPlantCode())
-                        .eq(SysUser::getStatus, (short) 1)
-                        .eq(SysUser::getRoleCode, "R06"));
-                for (SysUser manager : managers) {
-                    if (manager.getId().equals(loginUser.getUserId())) {
-                        continue;
+            if ("已闭环".equals(newStatus)) {
+                String scenarioCode = NotificationTypeEnum.EXCEPTION_CLOSED.getCode();
+                List<String> roleCodes = notificationConfigService.getReceivingRoleCodes(scenarioCode);
+                if (!roleCodes.isEmpty()) {
+                    List<Long> userIds = notificationConfigService.listUserIdsByRoleCodes(roleCodes, order.getPlantCode());
+                    for (Long userId : userIds) {
+                        if (userId.equals(loginUser.getUserId())) {
+                            continue;
+                        }
+                        NotificationCreateDTO managerNotification = new NotificationCreateDTO();
+                        managerNotification.setUserId(userId);
+                        managerNotification.setType(scenarioCode);
+                        managerNotification.setLevel("提醒");
+                        managerNotification.setTitle("异常单" + order.getExceptionNo() + " 已闭环");
+                        managerNotification.setContent("异常单已完成闭环，操作人：" + loginUser.getRealName());
+                        managerNotification.setBusinessType(BUSINESS_TYPE_EXCEPTION);
+                        managerNotification.setBusinessId(order.getId());
+                        managerNotification.setPlantCode(order.getPlantCode());
+                        managerNotification.setCreatedBy(loginUser.getRealName());
+                        notificationService.createNotification(managerNotification);
                     }
-                    NotificationCreateDTO managerNotification = new NotificationCreateDTO();
-                    managerNotification.setUserId(manager.getId());
-                    managerNotification.setType("EXCEPTION_CLOSED");
-                    managerNotification.setLevel("\u63d0\u9192");
-                    managerNotification.setTitle("\u5f02\u5e38\u5355" + order.getExceptionNo() + " \u5df2\u95ed\u73af");
-                    managerNotification.setContent("\u5f02\u5e38\u5355\u5df2\u5b8c\u6210\u95ed\u73af\uff0c\u64cd\u4f5c\u4eba\uff1a" + loginUser.getRealName());
-                    managerNotification.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-                    managerNotification.setBusinessId(order.getId());
-                    managerNotification.setPlantCode(order.getPlantCode());
-                    managerNotification.setCreatedBy(loginUser.getRealName());
-                    notificationService.createNotification(managerNotification);
                 }
             }
             NotificationCreateDTO dto = new NotificationCreateDTO();
             dto.setUserId(loginUser.getUserId());
-            dto.setType("EXCEPTION_STATUS_CHANGED");
+            dto.setType(NotificationTypeEnum.EXCEPTION_STATUS_CHANGED.getCode());
             dto.setTitle("异常单 " + order.getExceptionNo() + " 状态变更");
             dto.setContent("新状态：" + newStatus);
             dto.setBusinessType(BUSINESS_TYPE_EXCEPTION);
@@ -1246,6 +1668,38 @@ public class ExceptionServiceImpl implements ExceptionService {
             notificationService.createNotification(dto);
         } catch (Exception e) {
             log.warn("发送异常单状态变更通知失败：exceptionId={}", order.getId(), e);
+        }
+    }
+
+    /**
+     * 配置驱动的通知发送：通过 notification_config 表读取接收角色 → 解析为 userId → 逐个发送站内信。
+     * 管理员可通过 PUT /api/v1/admin/notification-config/{id} 随时调整场景开关与接收角色。
+     */
+    private void notifyByConfig(ExceptionOrder order, String scenarioCode, String title, String content) {
+        try {
+            List<String> roleCodes = notificationConfigService.getReceivingRoleCodes(scenarioCode);
+            if (roleCodes.isEmpty()) {
+                return; // 管理员禁用了此场景
+            }
+            List<Long> userIds = notificationConfigService.listUserIdsByRoleCodes(roleCodes, order.getPlantCode());
+            if (userIds.isEmpty()) {
+                return;
+            }
+            String operator = ExceptionModuleHelper.currentOperator();
+            for (Long uid : userIds) {
+                NotificationCreateDTO dto = new NotificationCreateDTO();
+                dto.setUserId(uid);
+                dto.setType(scenarioCode);
+                dto.setTitle(title);
+                dto.setContent(content);
+                dto.setBusinessType(BUSINESS_TYPE_EXCEPTION);
+                dto.setBusinessId(order.getId());
+                dto.setPlantCode(order.getPlantCode());
+                dto.setCreatedBy(operator);
+                notificationService.createNotification(dto);
+            }
+        } catch (Exception e) {
+            log.warn("配置驱动通知发送失败：exceptionId={}, scenarioCode={}", order.getId(), scenarioCode, e);
         }
     }
 
@@ -1268,40 +1722,11 @@ public class ExceptionServiceImpl implements ExceptionService {
         return String.format("EX-%s-%03d", datePart, seq);
     }
 
-    private String getCurrentPlantCode() {
-        LoginUser loginUser = getCurrentLoginUser();
-        return loginUser.getPlantCode().name();
-    }
-
     private LoginUser getCurrentLoginUser() {
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null || loginUser.getPlantCode() == null) {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "未获取到登录用户信息");
         }
         return loginUser;
-    }
-
-    /**
-     * 角色权限校验：R00 超级管理员绕过；其余角色仅允许在 allowedRoles 内的操作。
-     */
-    private void assertRole(String... allowedRoles) {
-        LoginUser loginUser = getCurrentLoginUser();
-        if ("R00".equals(loginUser.getRoleCode())) {
-            return;
-        }
-        for (String role : allowedRoles) {
-            if (role.equals(loginUser.getRoleCode())) {
-                return;
-            }
-        }
-        throw new BusinessException(ResultCode.FORBIDDEN,
-                "当前角色（" + loginUser.getRoleCode() + "）无权执行该操作");
-    }
-
-    /**
-     * 判断流程类型是否包含 8D
-     */
-    private boolean processIncludes8D(String processType) {
-        return "8D".equals(processType) || "BOTH".equals(processType);
     }
 }

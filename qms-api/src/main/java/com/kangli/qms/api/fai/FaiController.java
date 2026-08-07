@@ -18,9 +18,13 @@ import com.kangli.qms.service.fai.dto.FaiSignatureRequest;
 import com.kangli.qms.service.fai.dto.FaiSpcBaselineVO;
 import com.kangli.qms.service.fai.dto.FaiStandardResponse;
 import com.kangli.qms.service.fai.dto.FaiStandardSaveRequest;
+import com.kangli.qms.service.fai.dto.FaiStandardHistoryResponse;
+import com.kangli.qms.service.fai.dto.FaiStandardApprovalResponse;
+import com.kangli.qms.service.fai.dto.FaiStandardProcessVO;
 import com.kangli.qms.service.fai.FaiChangeTriggerService;
 import com.kangli.qms.service.fai.FaiInspectionService;
 import com.kangli.qms.service.fai.FaiStandardService;
+import javax.validation.Valid;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
@@ -94,6 +98,16 @@ public class FaiController {
     @ApiOperation(value = "变更触发详情")
     public R<FaiChangeTriggerResponse> changeTriggerDetail(@PathVariable Long id) {
         return R.ok(changeTriggerService.detail(id));
+    }
+
+    @PostMapping("/change-triggers/{id}/void")
+    @ApiOperation(value = "作废变更触发（仅草稿态：未建单、未检验）")
+    public R<Void> voidChangeTrigger(
+            @ApiParam(value = "变更触发 id") @PathVariable Long id,
+            @ApiParam(value = "作废原因") @RequestParam String reason) {
+        LoginUser loginUser = getCurrentLoginUser();
+        changeTriggerService.voidTrigger(id, reason, loginUser);
+        return R.ok(null, "作废成功");
     }
 
     // ===== 首件检验 =====
@@ -226,6 +240,98 @@ public class FaiController {
         LoginUser loginUser = getCurrentLoginUser();
         standardService.deleteStandard(id, loginUser);
         return R.ok(null, "删除成功");
+    }
+
+    @GetMapping("/standards/{id}")
+    @ApiOperation(value = "标准模板详情（含厂区隔离）")
+    public R<FaiStandardResponse> standardDetail(@ApiParam(value = "标准 id") @PathVariable Long id) {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(standardService.getStandard(id, loginUser.getPlantCode().name()));
+    }
+
+    @GetMapping("/standards/{id}/history")
+    @ApiOperation(value = "查询标准模板变更历史（P0：变更追溯，含厂区隔离）")
+    public R<List<FaiStandardHistoryResponse>> standardHistory(@ApiParam(value = "标准 id") @PathVariable Long id) {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(standardService.getHistory(id, loginUser.getPlantCode().name()));
+    }
+
+    // ===== P1：轻量级审批工作流 =====
+
+    @PostMapping("/standards/approvals")
+    @ApiOperation(value = "提交标准变更至审批队列（不直接执行）")
+    public R<Long> submitForApproval(@Valid @RequestBody FaiStandardSaveRequest req) {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(standardService.submitForApproval(req, loginUser));
+    }
+
+    @GetMapping("/standards/approvals")
+    @ApiOperation(value = "查询待审批列表（当前厂区）")
+    public R<List<FaiStandardApprovalResponse>> pendingApprovals() {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(standardService.getPendingApprovals(loginUser));
+    }
+
+    @PostMapping("/standards/approvals/{id}/approve")
+    @ApiOperation(value = "审批通过 —— 执行变更")
+    public R<Void> approveStandard(@ApiParam(value = "审批记录 id") @PathVariable Long id) {
+        LoginUser loginUser = getCurrentLoginUser();
+        standardService.approveStandard(id, loginUser);
+        return R.ok(null, "审批通过，变更已执行");
+    }
+
+    @PostMapping("/standards/approvals/{id}/reject")
+    @ApiOperation(value = "驳回审批")
+    public R<Void> rejectStandard(
+            @ApiParam(value = "审批记录 id") @PathVariable Long id,
+            @ApiParam(value = "驳回原因") @RequestParam(required = false, defaultValue = "") String reason) {
+        LoginUser loginUser = getCurrentLoginUser();
+        standardService.rejectStandard(id, reason, loginUser);
+        return R.ok(null, "已驳回");
+    }
+
+    // ===== P2：版本管理 =====
+
+    @PostMapping("/standards/{id}/version")
+    @ApiOperation(value = "创建新版本（基于现有标准克隆，version+1）")
+    public R<Long> newVersion(
+            @ApiParam(value = "标准 id") @PathVariable Long id,
+            @Valid @RequestBody FaiStandardSaveRequest req) {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(standardService.createNewVersion(id, req, loginUser));
+    }
+
+    @PostMapping("/standards/{id}/rollback/{historyId}")
+    @ApiOperation(value = "回滚到历史版本")
+    public R<Long> rollbackToVersion(
+            @ApiParam(value = "标准 id") @PathVariable Long id,
+            @ApiParam(value = "历史记录 id") @PathVariable Long historyId) {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(standardService.rollbackToVersion(id, historyId, loginUser));
+    }
+
+    // ===== P3：定期复审提醒 =====
+
+    @PostMapping("/standards/{id}/review")
+    @ApiOperation(value = "标记标准已复审")
+    public R<Void> markReviewed(@ApiParam(value = "标准 id") @PathVariable Long id) {
+        LoginUser loginUser = getCurrentLoginUser();
+        standardService.markReviewed(id, loginUser);
+        return R.ok(null, "已标记复审");
+    }
+
+    @GetMapping("/standards/overdue-reviews")
+    @ApiOperation(value = "查询复审逾期的标准列表")
+    public R<List<FaiStandardResponse>> overdueReviews() {
+        return R.ok(standardService.getOverdueReviews(getCurrentLoginUser().getPlantCode().name()));
+    }
+
+    @GetMapping("/standards/processes")
+    @ApiOperation(value = "按分类取检验标准已维护工序（去重），供变更触发下拉")
+    public R<List<FaiStandardProcessVO>> listStandardProcesses(
+            @ApiParam(value = "分类：PRODUCT/MATERIAL") @RequestParam String itemType) {
+        return R.ok(standardService.listProcessesByItemType(
+                getCurrentLoginUser().getPlantCode().name(), itemType));
     }
 
     // ===== SPC 联动 =====

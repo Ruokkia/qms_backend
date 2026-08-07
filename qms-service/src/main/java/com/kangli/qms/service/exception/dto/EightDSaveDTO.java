@@ -17,11 +17,26 @@ public class EightDSaveDTO implements Serializable {
     private static final long serialVersionUID = 1L;
 
     @NotBlank(message = "当前步骤不能为空")
-    @ApiModelProperty(value = "当前步骤：D1-D8", required = true)
+    @ApiModelProperty(value = "当前步骤：8D 为 D0-D8，CAPA 流程另见 capaCurrentStep", required = true)
     private String currentStep;
 
-    @ApiModelProperty(value = "D1 团队成立")
+    @ApiModelProperty(value = "D0 质量部发起说明（立案情由 / 不良现象概述）")
+    private String d0Symptom;
+
+    @ApiModelProperty(value = "D0 发起责任人（质量部发起者姓名）")
+    private String d0Initiator;
+
+    @ApiModelProperty(value = "D0 发起时间")
+    private java.time.LocalDateTime d0InitiateTime;
+
+    @ApiModelProperty(value = "D1 团队成立（JSON 数组：成员姓名列表）")
     private String d1Team;
+
+    @ApiModelProperty(value = "CAPA 负责人姓名列表（JSON 数组，与 8D 团队对称指派）")
+    private String capaOwner;
+
+    @ApiModelProperty(value = "CAPA 流程当前阶段：C1-C4（选 CAPA 或 BOTH 时维护）")
+    private String capaCurrentStep;
 
     @ApiModelProperty(value = "D2 问题描述（5W2H）")
     private String d2ProblemDesc;

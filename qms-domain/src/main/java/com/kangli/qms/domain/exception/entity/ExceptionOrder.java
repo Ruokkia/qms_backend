@@ -44,8 +44,7 @@ public class ExceptionOrder implements Serializable {
     /** 供应商ID */
     private Long supplierId;
 
-    /** 供应商名称（关联 qms.supplier，列表/详情回填，非持久化字段） */
-    @TableField(exist = false)
+    /** 供应商名称（创建时直接存储，即使 supplier_id 查找失败也可展示） */
     private String supplierName;
 
     /** 关联工单ID */
@@ -74,6 +73,14 @@ public class ExceptionOrder implements Serializable {
 
     /** 整改流程类型：CAPA(改善措施+验证) / 8D(八步报告) / BOTH(两者) / NULL(待选择) */
     private String processType;
+
+    /**
+     * CAPA 治理阶段（BOTH 模式专用）：
+     * INITIATE / ROOT_CAUSE_APPROVED / MEASURES_APPROVED / CLOSED
+     * 8D 与 CAPA 交错推进：D4→D5 需通过根因审批，D5→D6 需通过措施审批。
+     */
+    @TableField("capa_phase")
+    private String capaPhase;
 
     /** 整改截止日期 */
     private LocalDate deadline;
@@ -110,6 +117,27 @@ public class ExceptionOrder implements Serializable {
     private String signatureUser;
     private LocalDateTime signatureTime;
     private String signatureReason;
+
+    // ---- 发起整改流程责任人 ----
+    /** 整改责任人 ID（自动触发时留空，由相关部门在「发起整改」时从已有人员中选择填写） */
+    @TableField("owner_id")
+    private Long ownerId;
+
+    /** 整改责任人姓名（冗余存储，便于列表/详情直接展示，与 initiatedBy 发起操作人区分） */
+    @TableField("owner_name")
+    private String ownerName;
+
+    /** 发起整改流程的责任人姓名（点击「发起整改」的人，与 updatedBy 区分） */
+    @TableField("initiated_by")
+    private String initiatedBy;
+
+    /** 发起整改流程的时间 */
+    @TableField("initiated_at")
+    private LocalDateTime initiatedAt;
+
+    /** 发起整改流程的责任人用户ID（用于通知推送） */
+    @TableField("initiated_by_user_id")
+    private Long initiatedByUserId;
 
     // ---- 系统扩展列 ----
     private String plantCode;

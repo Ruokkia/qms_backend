@@ -11,6 +11,8 @@ import com.kangli.qms.domain.supplier.mapper.SupplierMapper;
 import com.kangli.qms.enums.PlantCode;
 import com.kangli.qms.service.exception.dto.EscalationCreateDTO;
 import com.kangli.qms.service.exception.dto.EscalationPlanDTO;
+import com.kangli.qms.service.notification.NotificationConfigService;
+import com.kangli.qms.service.notification.NotificationService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -38,7 +40,9 @@ class EscalationServiceImplTest {
     void checkEscalation_excludesRowsWithoutMappedSupplier() {
         ExceptionOrderMapper exceptionOrderMapper = mock(ExceptionOrderMapper.class);
         SupplierMapper supplierMapper = mock(SupplierMapper.class);
-        EscalationServiceImpl service = new EscalationServiceImpl(exceptionOrderMapper, supplierMapper);
+        NotificationService notificationService = mock(NotificationService.class);
+        NotificationConfigService notificationConfigService = mock(NotificationConfigService.class);
+        EscalationServiceImpl service = new EscalationServiceImpl(exceptionOrderMapper, supplierMapper, notificationService, notificationConfigService);
         LoginUserHolder.set(LoginUser.builder().plantCode(PlantCode.SZ).build());
 
         TriggeredSupplierVO mapped = candidate(11L, "SUP-SZ-01", "1,2,3");
@@ -57,7 +61,8 @@ class EscalationServiceImplTest {
     void create_rejectsUnknownSupplierBeforePersistingEscalation() {
         ExceptionOrderMapper exceptionOrderMapper = mock(ExceptionOrderMapper.class);
         SupplierMapper supplierMapper = mock(SupplierMapper.class);
-        EscalationServiceImpl service = new EscalationServiceImpl(exceptionOrderMapper, supplierMapper);
+        EscalationServiceImpl service = new EscalationServiceImpl(exceptionOrderMapper, supplierMapper,
+                mock(NotificationService.class), mock(NotificationConfigService.class));
         LoginUserHolder.set(LoginUser.builder().plantCode(PlantCode.SZ).realName("测试用户").build());
         when(supplierMapper.selectById(999L)).thenReturn(null);
 
@@ -73,7 +78,8 @@ class EscalationServiceImplTest {
     void create_usesSupplierMasterAndPendingReviewStatus() {
         ExceptionOrderMapper exceptionOrderMapper = mock(ExceptionOrderMapper.class);
         SupplierMapper supplierMapper = mock(SupplierMapper.class);
-        EscalationServiceImpl service = spy(new EscalationServiceImpl(exceptionOrderMapper, supplierMapper));
+        EscalationServiceImpl service = spy(new EscalationServiceImpl(exceptionOrderMapper, supplierMapper,
+                mock(NotificationService.class), mock(NotificationConfigService.class)));
         LoginUserHolder.set(LoginUser.builder().plantCode(PlantCode.SZ).realName("测试用户").build());
         Supplier supplier = new Supplier();
         supplier.setId(11L);
@@ -104,7 +110,8 @@ class EscalationServiceImplTest {
     void savePlan_bindsCurrentLoginUserAsPlanWriter() {
         ExceptionOrderMapper exceptionOrderMapper = mock(ExceptionOrderMapper.class);
         SupplierMapper supplierMapper = mock(SupplierMapper.class);
-        EscalationServiceImpl service = spy(new EscalationServiceImpl(exceptionOrderMapper, supplierMapper));
+        EscalationServiceImpl service = spy(new EscalationServiceImpl(exceptionOrderMapper, supplierMapper,
+                mock(NotificationService.class), mock(NotificationConfigService.class)));
         LoginUserHolder.set(LoginUser.builder().plantCode(PlantCode.SZ).realName("测试用户").build());
         Escalation escalation = new Escalation();
         escalation.setId(1L);

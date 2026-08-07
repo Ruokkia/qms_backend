@@ -63,6 +63,9 @@ public class VerificationRecordController {
         record.setPlantName(loginUser.getPlantCode().getChineseName());
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
+        // 验证人由后端自动设置为当前登录用户（质量审核人员），不信任前端传值
+        record.setVerifierId(loginUser.getUserId());
+        record.setVerifierName(loginUser.getRealName());
         if (record.getResult() != null && !"通过".equals(record.getResult()) && !"不通过".equals(record.getResult())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "验证结果必须是「通过」或「不通过」");
         }
@@ -80,6 +83,9 @@ public class VerificationRecordController {
         record.setId(id);
         LoginUser loginUser = getCurrentLoginUser();
         record.setUpdatedBy(loginUser.getRealName());
+        // 验证人由后端自动设置为当前登录用户（质量审核人员），不信任前端传值
+        record.setVerifierId(loginUser.getUserId());
+        record.setVerifierName(loginUser.getRealName());
         verificationRecordService.updateById(record);
         auditLogService.record("verification_record", id, "UPDATE", before, record, "更新验证记录");
         return R.ok(null, "更新成功");

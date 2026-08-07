@@ -36,6 +36,8 @@ public class CriticalMaterialBinding implements Serializable {
     /** 物料代码 */
     private String materialCode;
     private String materialName;
+    /** 子项批号（详情展示用，不影响追溯链路） */
+    private String sonLotNo;
     private String specModel;
     private String scanner;
     private LocalDateTime scanTime;

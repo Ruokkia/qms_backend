@@ -7,6 +7,7 @@ import lombok.Data;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 /**
  * 统一响应体。
@@ -51,7 +52,7 @@ public class R<T> implements Serializable {
         this.code = code;
         this.message = message;
         this.data = data;
-        this.timestamp = LocalDateTime.now();
+        this.timestamp = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
         this.traceId = TraceIdHolder.getTraceId();
     }
 

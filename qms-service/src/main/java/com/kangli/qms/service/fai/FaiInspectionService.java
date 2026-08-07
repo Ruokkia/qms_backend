@@ -53,6 +53,13 @@ public interface FaiInspectionService {
     FaiReportResponse report(Long id);
 
     /**
+     * 校验首件检验记录电子签名的完整性。
+     * <p>未签名返回 {@link SignatureIntegrity#INTACT}；已签且内容绑定哈希一致返回 INTACT；
+     * 已签但失配返回 TAMPERED（疑似篡改）；历史签名 content_hash 为空返回 LEGACY_UNVERIFIABLE。</p>
+     */
+    SignatureIntegrity verifySignatureIntegrity(Long id);
+
+    /**
      * SPC 调取基准数据（按 param_code 分组的实际值）。
      */
     List<FaiSpcBaselineVO> spcBaseline(Long faiRecordId);

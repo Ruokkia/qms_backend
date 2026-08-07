@@ -25,4 +25,13 @@ public interface FaiChangeTriggerService {
      * 变更触发详情。
      */
     FaiChangeTriggerResponse detail(Long id);
+
+    /**
+     * 作废变更触发（仅草稿态：status=待检验 且未关联检验单）。
+     * @param id       变更触发主键
+     * @param reason   作废原因
+     * @param loginUser 当前操作人
+     * @throws BusinessException 若已建单（hasInspection=true）则拒绝作废
+     */
+    void voidTrigger(Long id, String reason, LoginUser loginUser);
 }

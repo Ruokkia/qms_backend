@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -24,7 +25,7 @@ public class ProductionDefectAnalyticsServiceImpl implements ProductionDefectAna
     private static BigDecimal pct(BigDecimal cur, BigDecimal base) {
         if (cur == null || base == null || base.compareTo(BigDecimal.ZERO) == 0) return null;
         return cur.subtract(base).multiply(BigDecimal.valueOf(100))
-                .divide(base, 2, BigDecimal.ROUND_HALF_UP);
+                .divide(base, 2, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal sum(List<DefectTrendPointVO> list, Function<DefectTrendPointVO, BigDecimal> f) {
@@ -59,7 +60,7 @@ public class ProductionDefectAnalyticsServiceImpl implements ProductionDefectAna
         long repair = sumLong(cur, DefectTrendPointVO::getRepairCount);
         BigDecimal scrapRate = repair == 0 ? BigDecimal.ZERO
                 : BigDecimal.valueOf(scrap).multiply(BigDecimal.valueOf(100))
-                    .divide(BigDecimal.valueOf(repair), 2, BigDecimal.ROUND_HALF_UP);
+                    .divide(BigDecimal.valueOf(repair), 2, RoundingMode.HALF_UP);
 
         List<DefectRankItemVO> rank = mapper.selectRank(plantCode, q.getStart(), q.getEnd(), q.getMetric(), "process", bool(q.getExcludeDraft()), 1);
         DefectAnalyticsSummaryVO vo = new DefectAnalyticsSummaryVO();
@@ -95,7 +96,8 @@ public class ProductionDefectAnalyticsServiceImpl implements ProductionDefectAna
         LocalDate s = LocalDate.parse(q.getStart());
         LocalDate e = LocalDate.parse(q.getEnd());
         long days = ChronoUnit.DAYS.between(s, e) + 1;
-        LocalDate momStart, momEnd;
+        LocalDate momStart;
+        LocalDate momEnd;
         if ("custom".equals(q.getMomMode()) && q.getMomStart() != null) {
             momStart = LocalDate.parse(q.getMomStart());
             momEnd = momStart.plusDays(days - 1);
@@ -112,7 +114,10 @@ public class ProductionDefectAnalyticsServiceImpl implements ProductionDefectAna
     private static boolean bool(Boolean b) { return b == null || b; }
 
     private static class Window {
-        final String momStart, momEnd, yoyStart, yoyEnd;
+        final String momStart;
+        final String momEnd;
+        final String yoyStart;
+        final String yoyEnd;
         Window(String a, String b, String c, String d) { momStart = a; momEnd = b; yoyStart = c; yoyEnd = d; }
     }
 }

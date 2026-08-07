@@ -43,6 +43,18 @@ public class FaiInspectionStandard implements Serializable {
     /** 备注 */
     private String remark;
 
+    /** 最近复审时间（P3：定期复审提醒） */
+    private LocalDateTime lastReviewedAt;
+
+    /** 复审间隔天数，默认 90 天（P3：定期复审提醒） */
+    private Integer reviewIntervalDays;
+
+    /** 被引用次数（P3：执行情况统计） */
+    private Integer usageCount;
+
+    /** 最近引用时间（P3：执行情况统计） */
+    private LocalDateTime lastUsedAt;
+
     // ---- 系统扩展列 ----
     private String plantCode;
     private String plantName;

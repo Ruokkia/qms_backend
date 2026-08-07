@@ -1,5 +1,6 @@
 package com.kangli.qms.service.fai.impl;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kangli.qms.common.BusinessException;
@@ -13,6 +14,7 @@ import com.kangli.qms.domain.fai.entity.FaiChangeTrigger;
 import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
 import com.kangli.qms.domain.fai.mapper.FaiChangeTriggerMapper;
 import com.kangli.qms.domain.fai.mapper.FaiInspectionRecordMapper;
+import com.kangli.qms.service.admin.AuditLogService;
 import com.kangli.qms.service.fai.FaiChangeTriggerService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
@@ -31,11 +33,14 @@ public class FaiChangeTriggerServiceImpl implements FaiChangeTriggerService {
 
     private final FaiChangeTriggerMapper changeTriggerMapper;
     private final FaiInspectionRecordMapper inspectionRecordMapper;
+    private final AuditLogService auditLogService;
 
     public FaiChangeTriggerServiceImpl(FaiChangeTriggerMapper changeTriggerMapper,
-                                       FaiInspectionRecordMapper inspectionRecordMapper) {
+                                       FaiInspectionRecordMapper inspectionRecordMapper,
+                                       AuditLogService auditLogService) {
         this.changeTriggerMapper = changeTriggerMapper;
         this.inspectionRecordMapper = inspectionRecordMapper;
+        this.auditLogService = auditLogService;
     }
 
     @Override
@@ -98,6 +103,51 @@ public class FaiChangeTriggerServiceImpl implements FaiChangeTriggerService {
             throw new BusinessException(ResultCode.NOT_FOUND, "变更触发记录不存在");
         }
         return toResponse(entity, hasInspection(id));
+    }
+
+    @Override
+    public void voidTrigger(Long id, String reason, LoginUser loginUser) {
+        FaiChangeTrigger entity = changeTriggerMapper.selectById(id);
+        if (entity == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "变更触发记录不存在");
+        }
+
+        // 厂区隔离：仅允许操作当前用户所属厂区的记录
+        String plantCode = loginUser.getPlantCode().name();
+        if (!plantCode.equals(entity.getPlantCode())) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "无权操作其他厂区的记录");
+        }
+
+        // 作废原因不能为空
+        if (!StringUtils.hasText(reason)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "作废原因不能为空");
+        }
+
+        // 场景2：已建单（已关联检验单）的记录完全不允许作废
+        if (hasInspection(id)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "已建单的变更触发记录不可作废，请通过「新建更正单」走更正流程");
+        }
+
+        // 已作废不重复作废
+        if ("已作废".equals(entity.getStatus())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "该记录已作废，无需重复操作");
+        }
+
+        // 保存变更前快照用于审计
+        String beforeSnapshot = JSONUtil.toJsonStr(toResponse(entity, false));
+
+        entity.setStatus("已作废");
+        entity.setVoidReason(reason);
+        entity.setUpdatedBy(loginUser.getRealName());
+
+        // 乐观锁 updateById，并发时会抛 OptimisticLockException
+        changeTriggerMapper.updateById(entity);
+
+        // 记录审计日志
+        auditLogService.record("fai_change_trigger", id, "VOID",
+                beforeSnapshot, JSONUtil.toJsonStr(toResponse(entity, false)), reason);
+
+        log.info("变更触发 id={} 已作废, 操作人={}, 原因={}", id, loginUser.getRealName(), reason);
     }
 
     private boolean hasInspection(Long changeTriggerId) {

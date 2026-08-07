@@ -8,6 +8,7 @@ import com.kangli.qms.domain.admin.vo.AdminUserVO;
 import com.kangli.qms.domain.admin.vo.RolePermissionVO;
 import java.util.List;
 import com.kangli.qms.domain.admin.entity.AuditLog;
+import com.kangli.qms.common.PageResult;
 
 public interface AdminService {
     List<AdminUserVO> listUsers();
@@ -21,5 +22,5 @@ public interface AdminService {
     RolePermissionVO updateRolePermissions(String roleCode, RolePermissionRequest request, String ip);
     RolePermissionVO createRole(RoleCreateRequest request, String ip);
     void deleteRole(String roleCode, AdminActionRequest request, String ip);
-    List<AuditLog> listAuditLogs();
+    PageResult<AuditLog> listAuditLogs(long page, long size);
 }

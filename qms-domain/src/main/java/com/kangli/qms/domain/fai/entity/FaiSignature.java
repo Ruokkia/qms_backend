@@ -31,8 +31,12 @@ public class FaiSignature implements Serializable {
     private String signerName;
     /** 签名类型：检验签/审核签 */
     private String signType;
-    /** SHA-256 哈希（仅存摘要） */
+    /** SHA-256 哈希（仅存摘要，覆盖元数据） */
     private String signatureHash;
+
+    /** 内容绑定哈希（SHA-256）：绑定完整检验记录内容（逐项实际值/判定/标准值/上下限 + 主表结论），
+     *  用于读取时完整性复核，满足 21 CFR Part 11 防篡改要求；历史签名行为 NULL */
+    private String contentHash;
     /** 签名时间 */
     private LocalDateTime signedAt;
     /** 签名原因 */

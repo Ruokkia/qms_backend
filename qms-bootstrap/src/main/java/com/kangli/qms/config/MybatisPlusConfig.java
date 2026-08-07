@@ -17,6 +17,9 @@ public class MybatisPlusConfig {
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        // 分公司数据隔离：基于 TenantLineInnerInterceptor 为所有单表 SELECT/UPDATE/DELETE
+        // 自动注入 plant_code 过滤（修复 L6 越权问题），须位于分页/乐观锁之前。
+        interceptor.addInnerInterceptor(new PlantTenantInterceptor());
         // 乐观锁：所有表 version 字段的自动校验与递增（缺失会导致 updateById 报
         // Parameter 'MP_OPTLOCK_VERSION_ORIGINAL' not found）
         interceptor.addInnerInterceptor(new OptimisticLockerInnerInterceptor());

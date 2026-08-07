@@ -153,6 +153,8 @@ public class SpcProcessServiceImpl implements SpcProcessService {
         if (rows == 0) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "记录已被他人修改，请刷新后重试");
         }
+        // refetch 同步 @Version：updateById 后 DB version 已 +1，内存对象 version 已过时
+        current = processMapper.selectById(current.getId());
         return toResponse(current);
     }
 

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.validation.Valid;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -101,7 +102,7 @@ public class NotificationController {
         Notification update = new Notification();
         update.setId(id);
         update.setIsRead((short) 1);
-        update.setReadAt(LocalDateTime.now());
+        update.setReadAt(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
         notificationService.updateById(update);
         return R.ok(null, "标记已读成功");
     }
@@ -110,7 +111,7 @@ public class NotificationController {
     @ApiOperation(value = "全部已读")
     public R<Void> markAllRead() {
         LoginUser loginUser = getCurrentLoginUser();
-        notificationService.markAllRead(loginUser.getUserId(), LocalDateTime.now());
+        notificationService.markAllRead(loginUser.getUserId(), LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
         return R.ok(null, "全部已读成功");
     }
 

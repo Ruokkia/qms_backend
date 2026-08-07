@@ -16,7 +16,7 @@
     <name>qms-backend</name>
     <description>康立质量管理系统（QMS）后端父工程</description>
     <properties>
-        <java.version>1.8</java.version>
+        <java.version>11</java.version>
         <mybatis-plus.version>3.5.5</mybatis-plus.version>
         <knife4j.version>3.0.3</knife4j.version>
         <jjwt.version>0.11.5</jjwt.version>

@@ -3,18 +3,6 @@ package com.kangli.qms.api.incoming;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kangli.qms.common.*;
-import com.kangli.qms.service.incoming.dto.MaterialInspectionImportDTO;
-import com.kangli.qms.service.incoming.dto.MaterialInspectionImportPreviewVO;
-import com.kangli.qms.service.incoming.dto.MaterialInspectionImportResultVO;
-import com.kangli.qms.service.incoming.dto.MaterialInspectionReconcileResultVO;
-import org.springframework.http.MediaType;
-import org.springframework.web.multipart.MultipartFile;
-
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
 import com.kangli.qms.domain.incoming.entity.MaterialInspection;
 import com.kangli.qms.service.incoming.MaterialInspectionService;
 import com.kangli.qms.domain.incoming.vo.KeySupplierTrendVO;
@@ -154,50 +142,6 @@ public class MaterialInspectionController {
         }
         return R.ok(record);
     }
-
-    @PostMapping("/import")
-    @ApiOperation(value = "批量导入物料检验记录", notes = "默认自动为不合格记录创建异常单")
-    public R<MaterialInspectionImportResultVO> importRecords(@RequestBody MaterialInspectionImportDTO dto) {
-        return R.ok(materialInspectionService.importRecords(dto));
-    }
-
-    @PostMapping(value = "/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @ApiOperation(value = "导入预览", notes = "解析 Excel 并逐行校验（记录编号/检验结果必填、库内唯一），不落库；返回可导入列表与失败明细")
-    public R<MaterialInspectionImportPreviewVO> previewImport(@RequestParam("file") MultipartFile file) {
-        return R.ok(materialInspectionService.previewImport(file));
-    }
-
-    @GetMapping("/import/template")
-    @ApiOperation(value = "下载来料检验导入 Excel 模板")
-    public void downloadTemplate(HttpServletResponse response) {
-        byte[] data = materialInspectionService.generateTemplate();
-        response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-        response.setCharacterEncoding("UTF-8");
-        String fileName = "来料检验导入模板.xlsx";
-        String encodedName;
-        try {
-            encodedName = URLEncoder.encode(fileName, "UTF-8");
-        } catch (UnsupportedEncodingException ex) {
-            encodedName = fileName;
-        }
-        response.setHeader("Content-Disposition", "attachment; filename=" + encodedName);
-        try (OutputStream os = response.getOutputStream()) {
-            os.write(data);
-            os.flush();
-        } catch (IOException ex) {
-            throw new BusinessException(ResultCode.INTERNAL_ERROR, "模板下载失败：" + ex.getMessage());
-        }
-    }
-
-    @PostMapping("/reconcile")
-    @ApiOperation(value = "手动对账（兜底直写库/ETL）", notes = "扫描未关联异常单的不合格记录并自动建单")
-    public R<MaterialInspectionReconcileResultVO> reconcile(
-            @RequestParam(required = false) String startDate,
-            @RequestParam(required = false) String endDate,
-            @RequestParam(required = false) String plantCode) {
-        return R.ok(materialInspectionService.reconcile(startDate, endDate, plantCode));
-    }
-
 
     @PutMapping("/{id}")
     @ApiOperation(value = "更新物料检验记录", notes = "当检验结果由\"合格\"变更为\"不合格\"时，会由 Service 在更新事务内自动创建关联异常单（强一致），无需前端额外调用。")

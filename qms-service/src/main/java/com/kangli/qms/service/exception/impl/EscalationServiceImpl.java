@@ -1,6 +1,5 @@
 package com.kangli.qms.service.exception.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.LoginUser;
@@ -20,6 +19,10 @@ import com.kangli.qms.domain.exception.mapper.ExceptionOrderMapper;
 import com.kangli.qms.domain.supplier.mapper.SupplierMapper;
 import com.kangli.qms.service.exception.EscalationService;
 import com.kangli.qms.service.exception.EscalationWorkflowPolicy;
+import com.kangli.qms.service.notification.NotificationConfigService;
+import com.kangli.qms.service.notification.NotificationService;
+import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
+import com.kangli.qms.service.notification.enums.NotificationTypeEnum;
 import com.kangli.qms.domain.exception.vo.EscalationCheckResultVO;
 import com.kangli.qms.domain.exception.vo.TriggeredSupplierVO;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +34,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 /**
  * 升级 Service 实现 — 含批量升级检查（90天内同类不良≥N次自动触发）。
@@ -39,12 +43,22 @@ import java.time.LocalDateTime;
 @Service
 public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalation> implements EscalationService {
 
+    private static final String DECISION_APPROVE = "APPROVE";
+    private static final String DECISION_REJECT = "REJECT";
+    private static final String SHANGHAI_ZONE = "Asia/Shanghai";
+
     private final ExceptionOrderMapper exceptionOrderMapper;
     private final SupplierMapper supplierMapper;
+    private final NotificationService notificationService;
+    private final NotificationConfigService notificationConfigService;
 
-    public EscalationServiceImpl(ExceptionOrderMapper exceptionOrderMapper, SupplierMapper supplierMapper) {
+    public EscalationServiceImpl(ExceptionOrderMapper exceptionOrderMapper, SupplierMapper supplierMapper,
+                                  NotificationService notificationService,
+                                  NotificationConfigService notificationConfigService) {
         this.exceptionOrderMapper = exceptionOrderMapper;
         this.supplierMapper = supplierMapper;
+        this.notificationService = notificationService;
+        this.notificationConfigService = notificationConfigService;
     }
 
     @Override
@@ -71,7 +85,7 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
         escalation.setEscalationAction(dto.getEscalationAction().trim());
         escalation.setRelatedExceptionIds(dto.getRelatedExceptionIds());
         escalation.setRemark(dto.getRemark());
-        escalation.setStatus("PENDING_REVIEW");
+        escalation.setStatus(EscalationWorkflowPolicy.PENDING_REVIEW);
         escalation.setProcessStage("PENDING_REVIEW");
         escalation.setPlantCode(loginUser.getPlantCode().name());
         escalation.setPlantName(loginUser.getPlantCode().getChineseName());
@@ -82,6 +96,7 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
     }
 
     @Override
+    @SuppressWarnings("java:S6204")
     public EscalationCheckResultVO checkEscalation(EscalationCheckDTO dto) {
         LoginUser loginUser = getCurrentLoginUser();
         String plantCode = loginUser.getPlantCode().name();
@@ -136,24 +151,25 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
         if (escalation == null || !loginUser.getPlantCode().name().equals(escalation.getPlantCode())) {
             throw new BusinessException(ResultCode.NOT_FOUND, "升级任务不存在");
         }
-        if (!"PENDING_REVIEW".equals(escalation.getStatus())) {
+        if (!EscalationWorkflowPolicy.PENDING_REVIEW.equals(escalation.getStatus())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "仅待审核升级任务可执行审核");
         }
-        if (!"APPROVE".equals(dto.getDecision()) && !"REJECT".equals(dto.getDecision())) {
+        if (!DECISION_APPROVE.equals(dto.getDecision()) && !DECISION_REJECT.equals(dto.getDecision())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "审核决定必须是 APPROVE 或 REJECT");
         }
 
-        escalation.setStatus("APPROVE".equals(dto.getDecision()) ? "ACTIVE" : "REJECTED");
-        escalation.setProcessStage("APPROVE".equals(dto.getDecision()) ? EscalationWorkflowPolicy.PLAN : EscalationWorkflowPolicy.REJECTED);
+        escalation.setStatus(DECISION_APPROVE.equals(dto.getDecision()) ? "ACTIVE" : "REJECTED");
+        escalation.setProcessStage(DECISION_APPROVE.equals(dto.getDecision()) ? EscalationWorkflowPolicy.PLAN : EscalationWorkflowPolicy.REJECTED);
         escalation.setReviewOpinion(dto.getOpinion());
         escalation.setReviewedBy(loginUser.getRealName());
-        escalation.setReviewedAt(LocalDateTime.now());
+        escalation.setReviewedAt(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)));
         escalation.setSignatureUser(loginUser.getRealName());
-        escalation.setSignatureTime(LocalDateTime.now());
+        escalation.setSignatureTime(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)));
         escalation.setSignatureReason("供应商重复问题升级审核");
         escalation.setUpdatedBy(loginUser.getRealName());
         updateById(escalation);
-        return escalation;
+        // refetch 同步 @Version：updateById 后 DB version 已 +1，内存对象 version 已过时
+        return getById(id);
     }
 
     @Override
@@ -163,11 +179,72 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
         EscalationWorkflowPolicy.requireStage(escalation.getProcessStage(), EscalationWorkflowPolicy.PLAN, "制定升级措施");
         escalation.setActionPlan(dto.getActionPlan());
         escalation.setOwnerName(dto.getOwnerName());
+        escalation.setOwnerId(dto.getOwnerId());
         escalation.setPlanFilledBy(getCurrentLoginUser().getRealName());
         escalation.setDueDate(dto.getDueDate());
         escalation.setProcessStage(EscalationWorkflowPolicy.EXECUTION);
         touch(escalation);
-        return escalation;
+
+        // 指派责任人通知
+        notifyEscalationOwner(escalation, dto);
+
+        // refetch 同步 @Version：touch() 内 updateById 后 DB version 已 +1
+        return getById(id);
+    }
+
+    /**
+     * 通知升级措施责任人（点对点）+ 按配置抄送角色。
+     */
+    private void notifyEscalationOwner(Escalation escalation, EscalationPlanDTO dto) {
+        try {
+            if (dto.getOwnerId() == null) {
+                return;
+            }
+
+            LoginUser loginUser = getCurrentLoginUser();
+            String scenarioCode = NotificationTypeEnum.ESCALATION_OWNER_ASSIGNED.getCode();
+            String level = "提醒";
+            String title = "升级措施指派：" + escalation.getEscalationReason();
+            String content = "您被指定为升级措施责任人（措施：" + dto.getActionPlan()
+                    + "；截止日期：" + dto.getDueDate() + "），请及时推进。";
+
+            // 1. 点对点通知被指派人
+            NotificationCreateDTO n = new NotificationCreateDTO();
+            n.setUserId(dto.getOwnerId());
+            n.setType(scenarioCode);
+            n.setLevel(level);
+            n.setTitle(title);
+            n.setContent(content);
+            n.setBusinessType("ESCALATION");
+            n.setBusinessId(escalation.getId());
+            n.setPlantCode(escalation.getPlantCode());
+            n.setCreatedBy(loginUser.getRealName());
+            notificationService.createNotification(n);
+
+            // 2. 按配置抄送额外角色
+            List<String> ccRoles = notificationConfigService.getReceivingRoleCodes(scenarioCode);
+            if (!ccRoles.isEmpty()) {
+                List<Long> ccUserIds = notificationConfigService.listUserIdsByRoleCodes(ccRoles, escalation.getPlantCode());
+                for (Long ccUserId : ccUserIds) {
+                    if (ccUserId.equals(dto.getOwnerId())) {
+                        continue;
+                    }
+                    NotificationCreateDTO cc = new NotificationCreateDTO();
+                    cc.setUserId(ccUserId);
+                    cc.setType(scenarioCode);
+                    cc.setLevel(level);
+                    cc.setTitle("【抄送】" + title);
+                    cc.setContent(content + "（通知对象：" + dto.getOwnerName() + "）");
+                    cc.setBusinessType("ESCALATION");
+                    cc.setBusinessId(escalation.getId());
+                    cc.setPlantCode(escalation.getPlantCode());
+                    cc.setCreatedBy(loginUser.getRealName());
+                    notificationService.createNotification(cc);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("发送升级措施指派通知失败：escalationId={}", escalation.getId(), e);
+        }
     }
 
     @Override
@@ -178,7 +255,7 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
         LoginUser user = getCurrentLoginUser();
         escalation.setExecutionRecord(dto.getExecutionRecord());
         escalation.setExecutedBy(user.getRealName());
-        escalation.setExecutedAt(LocalDateTime.now());
+        escalation.setExecutedAt(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)));
         escalation.setProcessStage(EscalationWorkflowPolicy.VERIFICATION);
         touch(escalation);
         return escalation;
@@ -196,7 +273,7 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
         escalation.setVerificationResult(dto.getResult());
         escalation.setVerificationEvidence(dto.getEvidence());
         escalation.setVerifiedBy(user.getRealName());
-        escalation.setVerifiedAt(LocalDateTime.now());
+        escalation.setVerifiedAt(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)));
         escalation.setProcessStage("PASS".equals(dto.getResult()) ? EscalationWorkflowPolicy.PENDING_CLOSE_APPROVAL : EscalationWorkflowPolicy.PLAN);
         touch(escalation);
         return escalation;
@@ -212,9 +289,9 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
         escalation.setProcessStage(EscalationWorkflowPolicy.CLOSED);
         escalation.setCloseReason(dto.getReason());
         escalation.setClosedBy(user.getRealName());
-        escalation.setClosedAt(LocalDateTime.now());
+        escalation.setClosedAt(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)));
         escalation.setSignatureUser(user.getRealName());
-        escalation.setSignatureTime(LocalDateTime.now());
+        escalation.setSignatureTime(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)));
         escalation.setSignatureReason("供应商升级关闭审批");
         touch(escalation);
         return escalation;

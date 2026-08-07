@@ -36,6 +36,9 @@ public class AuditLog implements Serializable {
     /** 变更后数据（JSONB） */
     private String afterData;
 
+    /** 面向业务用户的变更摘要 */
+    private String operationContent;
+
     /** 操作人ID */
     private Long operatorId;
 

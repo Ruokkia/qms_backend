@@ -2,18 +2,29 @@ package com.kangli.qms.service.exception.impl;
 
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.ResultCode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kangli.qms.service.exception.dto.EightDSaveDTO;
+import com.kangli.qms.domain.auth.entity.SysUser;
+import com.kangli.qms.domain.auth.mapper.SysUserMapper;
 import com.kangli.qms.domain.exception.entity.Exception8d;
 import com.kangli.qms.domain.exception.entity.ExceptionOrder;
 import com.kangli.qms.domain.exception.mapper.Exception8dMapper;
+import com.kangli.qms.domain.exception.mapper.Exception8dStepLogMapper;
 import com.kangli.qms.domain.exception.mapper.ExceptionOrderMapper;
 import com.kangli.qms.domain.exception.vo.EightDVO;
+import com.kangli.qms.service.exception.ExceptionApprovalConfigService;
+import com.kangli.qms.service.notification.NotificationConfigService;
+import com.kangli.qms.service.notification.NotificationService;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import org.mockito.ArgumentCaptor;
 
 /**
  * 8D 报告「只进不退、逐步推进」约束的回归测试。
@@ -24,7 +35,16 @@ class EightDServiceImplTest {
 
     private final Exception8dMapper eightdMapper = mock(Exception8dMapper.class);
     private final ExceptionOrderMapper orderMapper = mock(ExceptionOrderMapper.class);
-    private final EightDServiceImpl service = new EightDServiceImpl(eightdMapper, orderMapper);
+    private final Exception8dStepLogMapper stepLogMapper = mock(Exception8dStepLogMapper.class);
+    private final ExceptionApprovalConfigService approvalConfigService = mock(ExceptionApprovalConfigService.class);
+    private final NotificationService notificationService = mock(NotificationService.class);
+    private final SysUserMapper sysUserMapper = mock(SysUserMapper.class);
+    private final ObjectMapper objectMapper = mock(ObjectMapper.class);
+    private final NotificationConfigService notificationConfigService = mock(NotificationConfigService.class);
+    private final EightDServiceImpl service = new EightDServiceImpl(
+            eightdMapper, orderMapper, stepLogMapper,
+            approvalConfigService, notificationService,
+            notificationConfigService, sysUserMapper, objectMapper);
 
     private static final long EXCEPTION_ID = 1L;
 
@@ -92,5 +112,60 @@ class EightDServiceImplTest {
         EightDVO vo = service.saveOrUpdate(EXCEPTION_ID, dtoWithStep("D4"));
 
         assertEquals("D4", vo.getCurrentStep());
+    }
+
+    @Test
+    void nextStepAutoCreatesD1WhenMissing() {
+        // 对应缺陷：8D 流程已发起但未建记录，nextStep 应自动建 D1 而非 404
+        stubOrder();
+        when(eightdMapper.selectByExceptionId(EXCEPTION_ID)).thenReturn(null);
+        when(eightdMapper.selectByExceptionIdIgnoreDeleted(EXCEPTION_ID)).thenReturn(null);
+
+        EightDVO vo = service.nextStep(EXCEPTION_ID);
+
+        assertEquals("D1", vo.getCurrentStep());
+        ArgumentCaptor<Exception8d> captor = ArgumentCaptor.forClass(Exception8d.class);
+        verify(eightdMapper).insert(captor.capture());
+        assertEquals("D1", captor.getValue().getCurrentStep());
+        assertEquals(EXCEPTION_ID, captor.getValue().getExceptionId());
+    }
+
+    @Test
+    void saveOrUpdateD8SetsCapaStatusCompletedRegardlessOfCloseStatus() {
+        // 业务语义：到达 D8 即代表已完成，与异常单是否闭环无关
+        stubOrder(); // status=处理中（非已闭环）
+        when(eightdMapper.selectByExceptionId(EXCEPTION_ID)).thenReturn(existingAt("D7"));
+
+        service.saveOrUpdate(EXCEPTION_ID, dtoWithStep("D8"));
+
+        ArgumentCaptor<ExceptionOrder> orderCaptor = ArgumentCaptor.forClass(ExceptionOrder.class);
+        verify(orderMapper).updateById(orderCaptor.capture());
+        assertEquals("已完成", orderCaptor.getValue().getCapaStatus());
+    }
+
+    @Test
+    void saveOrUpdateNonD8KeepsCapaStatusInProgress() {
+        stubOrder();
+        when(eightdMapper.selectByExceptionId(EXCEPTION_ID)).thenReturn(existingAt("D5"));
+
+        service.saveOrUpdate(EXCEPTION_ID, dtoWithStep("D6"));
+
+        ArgumentCaptor<ExceptionOrder> orderCaptor = ArgumentCaptor.forClass(ExceptionOrder.class);
+        verify(orderMapper).updateById(orderCaptor.capture());
+        assertEquals("进行中", orderCaptor.getValue().getCapaStatus());
+    }
+
+    @Test
+    void nextStepToD8SetsCapaStatusCompleted() {
+        // nextStep 推进到 D8 时 capaStatus 应为已完成（统一收敛于 saveOrUpdate 入口）
+        stubOrder();
+        when(eightdMapper.selectByExceptionId(EXCEPTION_ID)).thenReturn(existingAt("D7"));
+
+        EightDVO vo = service.nextStep(EXCEPTION_ID);
+
+        assertEquals("D8", vo.getCurrentStep());
+        ArgumentCaptor<ExceptionOrder> orderCaptor = ArgumentCaptor.forClass(ExceptionOrder.class);
+        verify(orderMapper).updateById(orderCaptor.capture());
+        assertEquals("已完成", orderCaptor.getValue().getCapaStatus());
     }
 }

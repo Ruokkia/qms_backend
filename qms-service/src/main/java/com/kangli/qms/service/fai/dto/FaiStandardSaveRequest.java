@@ -13,6 +13,9 @@ import lombok.Data;
 @ApiModel(value = "FaiStandardSaveRequest", description = "首件检验标准模板保存请求")
 public class FaiStandardSaveRequest {
 
+    @ApiModelProperty(value = "标准 ID（更新时必填，新建时不填）")
+    private Long id;
+
     @ApiModelProperty(value = "物料代码", required = true)
     private String materialCode;
 

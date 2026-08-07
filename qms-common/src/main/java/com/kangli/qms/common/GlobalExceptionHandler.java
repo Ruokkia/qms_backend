@@ -2,6 +2,7 @@ package com.kangli.qms.common;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -56,6 +57,18 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.joining("; "));
         log.warn("[参数绑定失败] traceId={}, errors={}", TraceIdHolder.getTraceId(), msg);
         return R.fail(ResultCode.BAD_REQUEST, msg);
+    }
+
+    /** 请求体反序列化失败（如JSON格式错误、字段类型不匹配） */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public R<Void> handleMessageNotReadable(HttpMessageNotReadableException e, HttpServletRequest request) {
+        log.warn("[请求体解析失败] traceId={}, uri={}, msg={}", TraceIdHolder.getTraceId(), request.getRequestURI(), e.getMessage());
+        String detail = e.getMessage();
+        if (detail != null && detail.contains(":")) {
+            detail = detail.substring(detail.lastIndexOf(":") + 1).trim();
+        }
+        return R.fail(ResultCode.BAD_REQUEST, "请求数据格式错误，请检查：" + (detail != null ? detail : "字段类型不匹配"));
     }
 
     /** 未知异常兜底 */

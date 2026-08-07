@@ -54,6 +54,8 @@ public class Escalation implements Serializable {
     /** 审核通过后制定的升级措施与责任计划 */
     private String actionPlan;
     private String ownerName;
+    /** 升级措施责任人 ID（点对点 WebSocket 通知使用） */
+    private Long ownerId;
     /** 措施填写人：由后端根据当前登录账号自动写入，不接受前端传值。 */
     private String planFilledBy;
     private LocalDate dueDate;

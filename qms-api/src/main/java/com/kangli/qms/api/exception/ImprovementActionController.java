@@ -63,8 +63,12 @@ public class ImprovementActionController {
         action.setPlantName(loginUser.getPlantCode().getChineseName());
         action.setCreatedBy(loginUser.getRealName());
         action.setUpdatedBy(loginUser.getRealName());
+        // 改善措施责任人：若前端未指定，默认设置为当前登录用户（质量审核人员验收），同时确保 ownerName 不会被前端窜改
         if (action.getOwnerId() == null) {
             action.setOwnerId(loginUser.getUserId());
+            action.setOwnerName(loginUser.getRealName());
+        } else if (action.getOwnerName() == null || action.getOwnerName().isEmpty()) {
+            action.setOwnerName(loginUser.getRealName());
         }
         if (action.getStatus() == null) {
             action.setStatus("PENDING");

@@ -25,6 +25,10 @@ public class PermissionInterceptor implements HandlerInterceptor {
         if ("/api/v1/auth/me".equals(request.getRequestURI())
                 || "/api/v1/auth/logout".equals(request.getRequestURI())
                 || "/api/v1/auth/change-password".equals(request.getRequestURI())) return true;
+        // 放开「系统用户列表」只读查询，供异常整改相关人员选择改善措施负责人 / 验证人。
+        // 仅放行 GET 只读，其余 admin 写操作仍受 systemAdmin 权限约束。
+        if ("GET".equalsIgnoreCase(request.getMethod())
+                && "/api/v1/admin/users".equals(request.getRequestURI())) return true;
         LoginUser user = LoginUserHolder.get();
         if (user == null) throw new BusinessException(ResultCode.UNAUTHORIZED);
         try {

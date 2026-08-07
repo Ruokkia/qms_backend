@@ -44,10 +44,12 @@ public class FaiChangeTrigger implements Serializable {
     private String processCode;
     /** 触发原因 */
     private String triggerReason;
-    /** 状态：待检验/已检验/关闭 */
+    /** 状态：待检验/已检验/关闭/已作废 */
     private String status;
     /** 备注 */
     private String remark;
+    /** 作废原因（仅在 status=已作废 时填写） */
+    private String voidReason;
 
     // ---- 系统扩展列 ----
     private String plantCode;

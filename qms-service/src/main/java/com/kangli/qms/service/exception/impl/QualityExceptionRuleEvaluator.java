@@ -1,6 +1,7 @@
 package com.kangli.qms.service.exception.impl;
 
 import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
+import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
 import com.kangli.qms.domain.incoming.entity.MaterialInspection;
 import com.kangli.qms.domain.exception.vo.QualityExceptionDecisionVO;
 import com.kangli.qms.domain.exception.vo.QualityRuleCatalogVO;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -45,7 +47,6 @@ public class QualityExceptionRuleEvaluator {
 
         QualityExceptionDecisionVO decision = new QualityExceptionDecisionVO();
         decision.setSeverity(severe ? "严重" : "一般");
-        decision.setProcessType(severe ? "8D" : "CAPA");
         decision.setNotificationLevel(severe ? "严重" : "提醒");
         decision.setResponseHours(severe ? 24 : 48);
         decision.setDeadlineDays(severe ? 3 : 7);
@@ -70,16 +71,56 @@ public class QualityExceptionRuleEvaluator {
 
         QualityExceptionDecisionVO decision = new QualityExceptionDecisionVO();
         decision.setSeverity(severe ? "严重" : "一般");
-        decision.setProcessType(severe ? "8D" : "CAPA");
         decision.setNotificationLevel(severe ? "严重" : "提醒");
         decision.setResponseHours(severe ? 24 : 48);
         decision.setDeadlineDays(severe ? 3 : 7);
         decision.setRepeatCount30Days(repeatCount30Days);
         decision.setRuleReason(String.join("；", severe
-                ? reasons : List.of("首件不合格，未命中严重规则，按一般不良处理")));
+                ? reasons : Collections.singletonList("首件不合格，未命中严重规则，按一般不良处理")));
         decision.setHandlingMethods(buildHandlingMethods(severe));
         decision.setRequiredMeasures(buildRequiredMeasures(severe));
         return decision;
+    }
+
+    /**
+     * 成品入库检验不合格的严重等级评估。成品记录无供应商维度，采用「不合格率 ≥ 5%」作为严重判定依据，
+     * 与来料不良率规则对称；无不合格数量或未计算时按一般不良处理。
+     */
+    public QualityExceptionDecisionVO evaluateFinishedGoods(FinishedGoodsInspection inspection) {
+        List<String> reasons = new ArrayList<>();
+        BigDecimal defectRate = calculateFinishedDefectRate(inspection);
+        if (defectRate != null && defectRate.compareTo(SEVERE_DEFECT_RATE) >= 0) {
+            reasons.add("成品不合格率" + defectRate.toPlainString() + "%达到严重阈值5.00%");
+        }
+        boolean severe = !reasons.isEmpty();
+        if (defectRate == null) {
+            reasons.add("检验数量缺失或为0，未计算不合格率");
+        }
+        if (!severe) {
+            reasons.add("未命中严重规则，按一般不良处理");
+        }
+
+        QualityExceptionDecisionVO decision = new QualityExceptionDecisionVO();
+        decision.setSeverity(severe ? "严重" : "一般");
+        decision.setNotificationLevel(severe ? "严重" : "提醒");
+        decision.setResponseHours(severe ? 24 : 48);
+        decision.setDeadlineDays(severe ? 3 : 7);
+        decision.setDefectRate(defectRate);
+        decision.setRuleReason(String.join("；", reasons));
+        decision.setHandlingMethods(buildHandlingMethods(severe));
+        decision.setRequiredMeasures(buildRequiredMeasures(severe));
+        return decision;
+    }
+
+    private BigDecimal calculateFinishedDefectRate(FinishedGoodsInspection inspection) {
+        if (inspection.getInspectedQty() == null
+                || inspection.getInspectedQty().compareTo(BigDecimal.ZERO) <= 0
+                || inspection.getUnqualifiedQty() == null) {
+            return null;
+        }
+        return inspection.getUnqualifiedQty()
+                .multiply(new BigDecimal("100"))
+                .divide(inspection.getInspectedQty(), 2, RoundingMode.HALF_UP);
     }
 
     public QualityRuleCatalogVO catalog() {

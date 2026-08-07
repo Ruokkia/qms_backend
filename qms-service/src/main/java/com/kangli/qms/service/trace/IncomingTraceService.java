@@ -84,29 +84,117 @@ public class IncomingTraceService {
     /**
      * 单节点详情。
      *
-     * @param id   业务表主键
-     * @param type "fg" = finished_goods_inspection, "mi" = material_inspection
+     * <p>v1.2 改造：id 支持条码编码（fg:{barcode} / mi:{barcode}）与旧版数字主键两种格式；
+     * 新增可选参数 sonLotNo，半成品节点优先用其查成品表（prod_batch_or_sn = sonLotNo）。</p>
+     *
+     * @param id       节点 id（fg:{barcode} / mi:{barcode}，兼容旧版数字主键）
+     * @param type     "fg" = finished_goods_inspection, "mi" = material_inspection
+     * @param sonLotNo 子项批号（可选）：半成品节点用其查成品表，为空则回退 id 中解析的条码
      */
-    public Map<String, Object> node(long id, String type) {
+    public Map<String, Object> node(String id, String type, String sonLotNo) {
         if (!StringUtils.hasText(type)) {
             throw new IllegalArgumentException("缺少 type 参数（fg/mi）");
         }
         String currentPlant = plant();
 
         if ("fg".equalsIgnoreCase(type)) {
-            FinishedGoodsInspection fg = fgMapper.selectById(id);
-            if (fg == null || !Objects.equals(fg.getPlantCode(), currentPlant)) {
+            // 半成品节点：优先用 sonLotNo 查成品表（可能为批号，成品表存的是批号）
+            if (StringUtils.hasText(sonLotNo)) {
+                FinishedGoodsInspection fgBySon = selectFirstFg(sonLotNo.trim(), currentPlant);
+                if (fgBySon != null) {
+                    return buildNodeFromFg(fgBySon);
+                }
+                // sonLotNo 查不到时不立即报错，继续回退 id 中解析的条码
+            }
+            // 成品节点：按唯一条码查；半成品回退：按 material_barcode 查
+            FinishedGoodsInspection fg = resolveFgNode(id, currentPlant);
+            if (fg == null) {
+                // 绑定表回退：部分半成品仅存在于绑定表（material_barcode），成品表无对应记录
+                String barcode = resolveBarcodeFromId(id);
+                if (barcode != null) {
+                    CriticalMaterialBinding binding = bindingMapper.selectOne(
+                            new LambdaQueryWrapper<CriticalMaterialBinding>()
+                                    .eq(CriticalMaterialBinding::getPlantCode, currentPlant)
+                                    .eq(CriticalMaterialBinding::getMaterialBarcode, barcode)
+                                    .last("LIMIT 1"));
+                    if (binding != null) {
+                        return buildNodeFromBinding(binding,
+                                "半成品".equals(binding.getCategory()) ? "SEMI_FINISHED" : "MATERIAL");
+                    }
+                }
                 throw new IllegalArgumentException("节点不存在");
             }
             return buildNodeFromFg(fg);
         } else if ("mi".equalsIgnoreCase(type)) {
-            MaterialInspection mat = matMapper.selectById(id);
-            if (mat == null || !Objects.equals(mat.getPlantCode(), currentPlant)) {
+            MaterialInspection mat = resolveMatNode(id, currentPlant);
+            if (mat == null) {
                 throw new IllegalArgumentException("节点不存在");
             }
             return buildNodeFromMat(mat);
         }
         throw new IllegalArgumentException("不支持的 type: " + type);
+    }
+
+    /**
+     * 从节点 id 解析成品表记录：
+     * <ul>
+     *   <li>fg:{barcode} → prod_batch_or_sn = barcode 查询（含厂区过滤，多条取第一条）</li>
+     *   <li>纯数字 → 旧版主键 selectById</li>
+     * </ul>
+     */
+    private FinishedGoodsInspection resolveFgNode(String id, String currentPlant) {
+        String barcode = resolveBarcodeFromId(id);
+        if (barcode != null) {
+            return selectFirstFg(barcode, currentPlant);
+        }
+        if (StringUtils.hasText(id) && id.trim().matches("\\d+")) {
+            FinishedGoodsInspection fg = fgMapper.selectById(Long.parseLong(id.trim()));
+            if (fg != null && Objects.equals(fg.getPlantCode(), currentPlant)) {
+                return fg;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 从节点 id 解析物料表记录：
+     * <ul>
+     *   <li>mi:{barcode} → material_barcode = barcode 查询</li>
+     *   <li>纯数字 → 旧版主键 selectById</li>
+     * </ul>
+     */
+    private MaterialInspection resolveMatNode(String id, String currentPlant) {
+        String barcode = resolveBarcodeFromId(id);
+        if (barcode != null) {
+            return matMapper.selectOne(
+                    new LambdaQueryWrapper<MaterialInspection>()
+                            .eq(MaterialInspection::getMaterialBarcode, barcode)
+                            .eq(MaterialInspection::getPlantCode, currentPlant));
+        }
+        if (StringUtils.hasText(id) && id.trim().matches("\\d+")) {
+            MaterialInspection mat = matMapper.selectById(Long.parseLong(id.trim()));
+            if (mat != null && Objects.equals(mat.getPlantCode(), currentPlant)) {
+                return mat;
+            }
+        }
+        return null;
+    }
+
+    /** 从 fg:{barcode} / mi:{barcode} 中解析条码；纯数字或空返回 null */
+    private String resolveBarcodeFromId(String id) {
+        if (!StringUtils.hasText(id)) {
+            return null;
+        }
+        String trimmed = id.trim();
+        int colon = trimmed.indexOf(':');
+        if (colon >= 0 && colon < trimmed.length() - 1) {
+            return trimmed.substring(colon + 1);
+        }
+        // 兼容：前端解析 "fg:{barcode}" 后仅传纯条码（无前缀）的情况
+        if (!trimmed.matches("\\d+")) {
+            return trimmed;
+        }
+        return null;
     }
 
     /**
@@ -160,6 +248,7 @@ public class IncomingTraceService {
             row.put("workOrderNo", b.getWorkOrderNo());
             row.put("processName", b.getProcessName());
             row.put("plantCode", b.getPlantCode());
+            row.put("sonLotNo", b.getSonLotNo());
             result.add(row);
         }
         return result;
@@ -262,20 +351,19 @@ public class IncomingTraceService {
             String targetBarcode = up ? binding.getProductBarcode() : binding.getMaterialBarcode();
             Map<String, Object> child;
             if (up) {
-                FinishedGoodsInspection fg = graph.finishedGoodsByBarcode.get(targetBarcode);
-                if (fg != null) {
-                    child = buildNodeFromFg(fg);
-                    child.put("children", expand(targetBarcode, true, new LinkedHashSet<>(path), visited, graph));
-                } else {
-                    child = buildOrphanNode(targetBarcode);
-                }
+                // 向上-父节点：优先用成品表记录构建，正确区分成品/半成品（v1.5）
+                // 绑定表 category 仅描述子项类型；父项类型需查成品表（与 buildRootNode v1.4 一致）
+                FinishedGoodsInspection parentFg = graph.finishedGoodsByBarcode.get(targetBarcode);
+                child = parentFg != null ? buildNodeFromFg(parentFg)
+                                         : buildNodeFromBinding(binding, "FINISHED_GOOD");
+                child.put("children", expand(targetBarcode, true, new LinkedHashSet<>(path), visited, graph));
             } else if ("\u534a\u6210\u54c1".equals(binding.getCategory())) {
-                FinishedGoodsInspection fg = graph.finishedGoodsByBarcode.get(targetBarcode);
-                child = fg != null ? buildNodeFromFg(fg) : buildOrphanNode(targetBarcode);
+                // 向下-半成品：携带 sonLotNo（详情查询用，v1.2）
+                child = buildNodeFromBinding(binding, "SEMI_FINISHED");
                 child.put("children", expand(targetBarcode, false, new LinkedHashSet<>(path), visited, graph));
             } else {
-                MaterialInspection mat = graph.materialsByBarcode.get(targetBarcode);
-                child = mat != null ? buildNodeFromMat(mat) : buildOrphanNode(targetBarcode);
+                // 向下-物料：叶子节点
+                child = buildNodeFromBinding(binding, "MATERIAL");
             }
             children.add(child);
         }
@@ -342,7 +430,10 @@ public class IncomingTraceService {
             if (frontier.isEmpty()) break;
 
             QueryWrapper<CriticalMaterialBinding> wrapper = new QueryWrapper<>();
-            wrapper.select("product_barcode", "material_barcode", "category")
+            // v1.1：补齐节点展示所需字段（product_name/material_name/son_lot_no 等）
+            wrapper.select("product_barcode", "product_name", "material_barcode",
+                    "material_name", "material_code", "category", "spec_model",
+                    "plant_code", "son_lot_no")
                     .eq("plant_code", graph.plantCode)
                     .in(lookupColumn, frontier);
             List<CriticalMaterialBinding> bindings = bindingMapper.selectList(wrapper);
@@ -440,6 +531,37 @@ public class IncomingTraceService {
 
     // ==================== 节点构建（§6.4 字段映射） ====================
 
+    /**
+     * 基于绑定表记录构建树节点（v1.1：不预查业务表）。
+     *
+     * <p>id 编码规则（v1.2）：成品/半成品 → fg:{barcode}；物料 → mi:{barcode}。
+     * 半成品节点携带 sonLotNo 供详情查询使用。</p>
+     *
+     * @param binding  绑定表记录
+     * @param nodeType FINISHED_GOOD / SEMI_FINISHED / MATERIAL
+     */
+    private Map<String, Object> buildNodeFromBinding(CriticalMaterialBinding binding, String nodeType) {
+        boolean isFinished = "FINISHED_GOOD".equals(nodeType);
+        boolean isMaterial = "MATERIAL".equals(nodeType);
+        String barcode = isFinished ? binding.getProductBarcode() : binding.getMaterialBarcode();
+        String name = isFinished ? binding.getProductName() : binding.getMaterialName();
+        Map<String, Object> node = new LinkedHashMap<>();
+        node.put("id", (isMaterial ? "mi:" : "fg:") + barcode);
+        node.put("nodeType", nodeType);
+        node.put("barcode", barcode);
+        node.put("name", StringUtils.hasText(name) ? name : barcode);
+        node.put("productCode", isFinished ? null : binding.getMaterialCode());
+        node.put("materialCode", isFinished ? null : binding.getMaterialCode());
+        node.put("materialBatchNo", null);
+        node.put("specification", binding.getSpecModel());
+        node.put("plantCode", binding.getPlantCode());
+        node.put("finishedGoodsInspectionId", null);
+        node.put("materialInspectionId", null);
+        node.put("category", binding.getCategory());
+        node.put("sonLotNo", binding.getSonLotNo());
+        return node;
+    }
+
     /** 构建成品/半成品节点 DTO */
     private Map<String, Object> buildNodeFromFg(FinishedGoodsInspection fg) {
         Map<String, Object> node = new LinkedHashMap<>();
@@ -475,36 +597,43 @@ public class IncomingTraceService {
         return node;
     }
 
-    /** 构建孤立节点（条码在业务表中找不到对应记录） */
-    private Map<String, Object> buildOrphanNode(String barcode) {
-        Map<String, Object> node = new LinkedHashMap<>();
-        node.put("id", "orphan_" + barcode);
-        node.put("nodeType", "UNKNOWN");
-        node.put("barcode", barcode);
-        node.put("name", barcode);
-        node.put("productCode", null);
-        node.put("materialCode", null);
-        node.put("materialBatchNo", null);
-        node.put("specification", null);
-        node.put("plantCode", null);
-        node.put("finishedGoodsInspectionId", null);
-        node.put("materialInspectionId", null);
-        return node;
-    }
-
     // ==================== 辅助方法 ====================
 
-    /** 根节点构建：尝试从成品表、物料表查找 */
+    /**
+     * 根节点构建（v1.4：绑定表优先）。
+     *
+     * <p>当看板传入半成品唯一条码（如 S001）时，成品表存的是批号，直接按条码查成品表查不到，
+     * 因此必须<strong>先查绑定表</strong>（material_barcode = 输入 或 product_barcode = 输入），
+     * 命中后用绑定表字段构建根节点；绑定表无记录才回退业务表兜底。</p>
+     */
     private Map<String, Object> buildRootNode(String barcode) {
         String currentPlant = plant();
 
-        // 尝试成品表
+        // 1) 绑定表优先（v1.4）：子项或父项条码 = 输入
+        CriticalMaterialBinding binding = bindingMapper.selectOne(
+                new LambdaQueryWrapper<CriticalMaterialBinding>()
+                        .eq(CriticalMaterialBinding::getPlantCode, currentPlant)
+                        .and(w -> w.eq(CriticalMaterialBinding::getMaterialBarcode, barcode)
+                                .or().eq(CriticalMaterialBinding::getProductBarcode, barcode))
+                        .last("LIMIT 1"));
+        if (binding != null) {
+            // 输入为父项（product_barcode）时，优先用成品表构建：成品表能按 category 正确区分
+            // 成品/半成品（梅州数据中半成品条码同时充当父项与子项，仅凭绑定表会被误判为成品）。
+            if (barcode.equals(binding.getProductBarcode())) {
+                FinishedGoodsInspection parentFg = selectFirstFg(barcode, currentPlant);
+                if (parentFg != null) {
+                    return buildNodeFromFg(parentFg);
+                }
+            }
+            String nodeType = classifyRootNode(binding, barcode);
+            return buildNodeFromBinding(binding, nodeType);
+        }
+
+        // 2) 业务表兜底：孤立成品/物料（仅展示自身，无关联）
         FinishedGoodsInspection fg = selectFirstFg(barcode, currentPlant);
         if (fg != null) {
             return buildNodeFromFg(fg);
         }
-
-        // 尝试物料表
         MaterialInspection mat = matMapper.selectOne(
                 new LambdaQueryWrapper<MaterialInspection>()
                         .eq(MaterialInspection::getMaterialBarcode, barcode)
@@ -514,6 +643,21 @@ public class IncomingTraceService {
         }
 
         return null;
+    }
+
+    /**
+     * 根据绑定记录与输入条码判定根节点类型：
+     * <ul>
+     *   <li>输入 = product_barcode → 该行为父项，判定为成品（FINISHED_GOOD）</li>
+     *   <li>输入 = material_barcode 且分类为半成品 → SEMI_FINISHED</li>
+     *   <li>输入 = material_barcode 且分类为物料 → MATERIAL</li>
+     * </ul>
+     */
+    private String classifyRootNode(CriticalMaterialBinding binding, String inputBarcode) {
+        if (inputBarcode.equals(binding.getProductBarcode())) {
+            return "FINISHED_GOOD";
+        }
+        return "\u534a\u6210\u54c1".equals(binding.getCategory()) ? "SEMI_FINISHED" : "MATERIAL";
     }
 
     /**

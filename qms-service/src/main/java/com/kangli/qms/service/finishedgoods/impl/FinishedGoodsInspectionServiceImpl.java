@@ -11,14 +11,17 @@ import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
 import com.kangli.qms.domain.finishedgoods.mapper.FinishedGoodsInspectionMapper;
 import com.kangli.qms.service.finishedgoods.FinishedGoodsInspectionService;
 import com.kangli.qms.service.finishedgoods.dto.FinishedGoodsInspectionResponse;
+import com.kangli.qms.service.exception.ExceptionService;
 import com.kangli.qms.service.trace.NaturalKeyConflictMessageResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -37,6 +40,9 @@ public class FinishedGoodsInspectionServiceImpl
     private static final String PENDING = "待审核";
     private static final String APPROVED = "已审核";
     private static final String REJECTED = "驳回";
+
+    @Autowired
+    private ExceptionService exceptionService;
 
     public FinishedGoodsInspectionServiceImpl() {
     }
@@ -160,9 +166,20 @@ public class FinishedGoodsInspectionServiceImpl
             newMgr = PENDING;
         }
 
-        if (APPROVED.equals(newQc) && !APPROVED.equals(oldQc)) {
-            record.setQcReviewer(loginUser.getRealName());
-            record.setQcReviewTime(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
+        if (APPROVED.equals(newQc)) {
+            // 仅当审核人/时间尚未记录时才补全，避免重复 update 覆盖原有审核人
+            if (!APPROVED.equals(oldQc)) {
+                record.setQcReviewer(loginUser.getRealName());
+                record.setQcReviewTime(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
+            }
+            // 品管审核通过且检验结论为不合格时，自动触发「成品不良」异常单
+            // 改为依赖最终状态触发（不再要求"待审核→已审核"跃迁），
+            // 由 createFromFinishedGoods 内部按 sourceId+sourceType 防重，重复触发不会建重复单
+            if ("不合格".equals(record.getInspectionResult())
+                    && record.getUnqualifiedQty() != null
+                    && record.getUnqualifiedQty().compareTo(BigDecimal.ZERO) > 0) {
+                exceptionService.createFromFinishedGoods(record, loginUser);
+            }
         } else if (!APPROVED.equals(newQc)) {
             record.setQcReviewer(null);
             record.setQcReviewTime(null);

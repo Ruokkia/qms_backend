@@ -6,7 +6,6 @@ import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serializable;
 import java.math.BigDecimal;
 
 /**
@@ -16,7 +15,7 @@ import java.math.BigDecimal;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @ApiModel(description = "首件检验参数明细响应")
-public class FaiInspectionItemResponse extends FaiInspectionItem implements Serializable {
+public class FaiInspectionItemResponse extends FaiInspectionItem {
 
     private static final long serialVersionUID = 1L;
 

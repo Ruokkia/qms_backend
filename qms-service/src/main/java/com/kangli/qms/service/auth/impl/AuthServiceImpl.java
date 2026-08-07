@@ -1,6 +1,7 @@
 package com.kangli.qms.service.auth.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.kangli.qms.common.AuthConstants;
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.LoginUser;
@@ -33,8 +34,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -58,7 +63,10 @@ public class AuthServiceImpl implements AuthService {
 
     /** 日期时间格式（与前端对齐） */
     private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final List<String> SUPER_ADMIN_MODULES = List.of(
+    private static final String ROLE_CODE = "role_code";
+    private static final String ALL_PLANTS_KEY = "ALL_PLANTS";
+    private static final String SHANGHAI_ZONE = "Asia/Shanghai";
+    private static final List<String> SUPER_ADMIN_MODULES = Arrays.asList(
             "systemAdmin", "trace", "incoming", "exception", "fai", "spc",
             "productionDefect", "processTools", "finishedGoods");
 
@@ -94,8 +102,8 @@ public class AuthServiceImpl implements AuthService {
         checkAccountLocked(account);
 
         // 2. 查询用户
-        SysUser user = userMapper.selectOne(new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getAccount, account));
+        SysUser user = userMapper.selectOne(new QueryWrapper<SysUser>()
+                .eq("account", account));
         PlantCode userPlant = user != null ? PlantCode.of(user.getPlantCode()) : null;
 
         if (user == null) {
@@ -120,12 +128,12 @@ public class AuthServiceImpl implements AuthService {
         redisUtil.delete(AuthConstants.lockKey(account));
 
         // 6. 查询角色名称
-        SysRole role = roleMapper.selectOne(new LambdaQueryWrapper<SysRole>()
-                .eq(SysRole::getRoleCode, user.getRoleCode()));
+        SysRole role = roleMapper.selectOne(new QueryWrapper<SysRole>()
+                .eq(ROLE_CODE, user.getRoleCode()));
         String roleName = (role != null) ? role.getRoleName() : "";
 
         // 7. 判断是否可切换分公司（根据角色 data_scope 判断，ALL_PLANTS 即可切换）
-        boolean canSwitch = role != null && "ALL_PLANTS".equals(role.getDataScope());
+        boolean canSwitch = role != null && ALL_PLANTS_KEY.equals(role.getDataScope());
 
         // 8. 生成双 Token
         if (userPlant == null) {
@@ -144,10 +152,9 @@ public class AuthServiceImpl implements AuthService {
         // 13. 更新最后登录时间
         SysUser update = new SysUser();
         update.setId(user.getId());
-        update.setLastLoginAt(LocalDateTime.now());
+        update.setLastLoginAt(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)));
         update.setLoginFailCount(0);
-        update.setLockedUntil(null);
-        userMapper.updateById(update);
+        userMapper.update(update, new UpdateWrapper<SysUser>().eq("id", user.getId()).setSql("locked_until = null"));
 
         // 14. 写入登录日志
         writeLoginLog(user.getId(), account, userPlant, loginIp, "成功", null);
@@ -203,10 +210,10 @@ public class AuthServiceImpl implements AuthService {
         }
 
         // 5. 查询角色
-        SysRole role = roleMapper.selectOne(new LambdaQueryWrapper<SysRole>()
-                .eq(SysRole::getRoleCode, user.getRoleCode()));
+        SysRole role = roleMapper.selectOne(new QueryWrapper<SysRole>()
+                .eq(ROLE_CODE, user.getRoleCode()));
         String roleName = (role != null) ? role.getRoleName() : "";
-        boolean canSwitch = role != null && "ALL_PLANTS".equals(role.getDataScope());
+        boolean canSwitch = role != null && ALL_PLANTS_KEY.equals(role.getDataScope());
 
         // 6. 生成新的双 Token
         PlantCode userPlant = PlantCode.of(user.getPlantCode());
@@ -294,8 +301,8 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(ResultCode.NOT_FOUND, "用户不存在");
         }
 
-        SysRole role = roleMapper.selectOne(new LambdaQueryWrapper<SysRole>()
-                .eq(SysRole::getRoleCode, user.getRoleCode()));
+        SysRole role = roleMapper.selectOne(new QueryWrapper<SysRole>()
+                .eq(ROLE_CODE, user.getRoleCode()));
         String roleName = (role != null) ? role.getRoleName() : "";
 
         UserInfoVO vo = new UserInfoVO();
@@ -306,7 +313,7 @@ public class AuthServiceImpl implements AuthService {
         vo.setRoleName(roleName);
         vo.setPlantCode(user.getPlantCode());
         vo.setPlantName(user.getPlantName());
-        vo.setCanSwitchArea(role != null && "ALL_PLANTS".equals(role.getDataScope()));
+        vo.setCanSwitchArea(role != null && ALL_PLANTS_KEY.equals(role.getDataScope()));
         vo.setStatus(user.getStatus());
         vo.setLastLoginAt(user.getLastLoginAt() != null
                 ? user.getLastLoginAt().format(DT_FMT) : null);
@@ -325,6 +332,16 @@ public class AuthServiceImpl implements AuthService {
         if (Boolean.TRUE.equals(locked)) {
             long ttl = getTtlSeconds(AuthConstants.lockKey(account));
             long minutes = (ttl + 59) / 60;
+            throw new BusinessException(ResultCode.ACCOUNT_LOCKED,
+                    "账号已锁定，请" + minutes + "分钟后重试");
+        }
+        // L14：Redis 无记录时查库兜底，避免 Redis 丢数据后锁定失效
+        SysUser dbUser = userMapper.selectOne(new QueryWrapper<SysUser>().eq("account", account));
+        if (dbUser != null && dbUser.getLockedUntil() != null && dbUser.getLockedUntil().isAfter(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)))) {
+            ZonedDateTime now = ZonedDateTime.now(ZoneId.of(SHANGHAI_ZONE));
+            ZonedDateTime lockedUntil = dbUser.getLockedUntil().atZone(ZoneId.of(SHANGHAI_ZONE));
+            long remaining = Duration.between(now, lockedUntil).getSeconds();
+            long minutes = (remaining + 59) / 60;
             throw new BusinessException(ResultCode.ACCOUNT_LOCKED,
                     "账号已锁定，请" + minutes + "分钟后重试");
         }
@@ -352,7 +369,7 @@ public class AuthServiceImpl implements AuthService {
             if (userId != null) {
                 SysUser update = new SysUser();
                 update.setId(userId);
-                update.setLockedUntil(LocalDateTime.now().plusSeconds(loginProps.getLockDurationSeconds()));
+                update.setLockedUntil(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)).plusSeconds(loginProps.getLockDurationSeconds()));
                 update.setLoginFailCount((int) failCount);
                 userMapper.updateById(update);
             }
@@ -375,7 +392,7 @@ public class AuthServiceImpl implements AuthService {
         loginLog.setLoginIp(loginIp);
         loginLog.setLoginStatus(status);
         loginLog.setFailReason(failReason);
-        loginLog.setLoginTime(LocalDateTime.now());
+        loginLog.setLoginTime(LocalDateTime.now(ZoneId.of(SHANGHAI_ZONE)));
         loginLog.setCreatedBy(account);
         loginLogMapper.insert(loginLog);
     }
@@ -419,8 +436,8 @@ public class AuthServiceImpl implements AuthService {
         if ("R00".equals(roleCode)) {
             return SUPER_ADMIN_MODULES;
         }
-        return rolePermissionMapper.selectList(new LambdaQueryWrapper<SysRolePermission>()
-                        .eq(SysRolePermission::getRoleCode, roleCode))
+        return rolePermissionMapper.selectList(new QueryWrapper<SysRolePermission>()
+                        .eq(ROLE_CODE, roleCode))
                 .stream()
                 .map(SysRolePermission::getModuleCode)
                 .distinct()

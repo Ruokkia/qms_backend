@@ -3,16 +3,21 @@ package com.kangli.qms.service.exception;
 import com.kangli.qms.common.LoginUser;
 import com.kangli.qms.common.PageResult;
 import com.kangli.qms.service.exception.dto.ExceptionCloseDTO;
+import com.kangli.qms.service.exception.dto.ExceptionInitiateDTO;
+import com.kangli.qms.service.exception.dto.ExceptionUpdateDTO;
 import com.kangli.qms.domain.admin.entity.AuditLog;
 import com.kangli.qms.domain.exception.entity.ExceptionOrder;
 import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
+import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
 import com.kangli.qms.domain.incoming.entity.MaterialInspection;
+import com.kangli.qms.domain.exception.vo.CapaPhaseApprovalReadinessVO;
 import com.kangli.qms.domain.exception.vo.CloseReadinessVO;
 import com.kangli.qms.domain.exception.vo.ExceptionAnalysisVO;
 import com.kangli.qms.domain.exception.vo.ExceptionDetailVO;
 import com.kangli.qms.domain.exception.vo.ExceptionStatsVO;
 import com.kangli.qms.domain.supplier.vo.SupplierExceptionSummaryVO;
 import com.kangli.qms.domain.exception.vo.QualityRuleCatalogVO;
+import com.kangli.qms.domain.exception.vo.ExceptionUserOptionVO;
 
 import java.util.List;
 
@@ -36,17 +41,43 @@ public interface ExceptionService {
     /** 根据来料检验记录自动生成异常单 */
     ExceptionOrder createFromMaterialInspection(MaterialInspection inspection, LoginUser loginUser);
 
-    /** 更新异常单 */
-    void update(Long id, ExceptionOrder order);
+    /** 根据首件检验不合格记录自动生成异常单（避免重复创建） */
+    ExceptionOrder createFromFai(FaiInspectionRecord record, LoginUser loginUser);
+
+    /** 根据成品入库检验不合格记录自动生成异常单（避免重复创建，异常来源=成品不良） */
+    ExceptionOrder createFromFinishedGoods(FinishedGoodsInspection inspection, LoginUser loginUser);
+
+    /** 更新异常单（白名单 DTO 入参，禁止篡改系统字段） */
+    void update(Long id, ExceptionUpdateDTO dto);
 
     /** 逻辑删除异常单 */
     void delete(Long id);
 
     /**
-     * 发起整改流程：选择 CAPA / 8D / BOTH，将 process_type 写入并将 capa_status 由「待发起」推进为「进行中」。
+     * 发起整改流程：质量部门手动选择 CAPA / 8D / BOTH（系统不预填推荐值），
+     * 同时完成 D0 发起（立案说明 + 指派 8D 团队 / CAPA 负责人），将 capa_status 由「待发起」推进为「进行中」。
      * 仅当 capa_status='待发起' 时可发起；已发起或已闭环的异常单不允许重复发起。
      */
-    ExceptionOrder initiate(Long id, String processType);
+    ExceptionOrder initiate(Long id, ExceptionInitiateDTO dto);
+
+    /**
+     * 人员选项列表：用于「发起整改」时选择责任人、组建 8D 团队、指派 CAPA 负责人。
+     * 仅暴露 id/realName/roleCode/plantCode，供前端下拉/多选。
+     * 区别于 /api/v1/admin/users（需 systemAdmin 权限），本接口走 M2 异常模块权限，相关部门（R03/R04/R06）可用。
+     */
+    List<ExceptionUserOptionVO> listUserOptions();
+
+    /**
+     * CAPA 根因审批（BOTH 模式专用）。
+     * 8D 完成 D4 后需要 CAPA 质量部门审批根因分析结果，审批通过后 8D 方可推进至 D5。
+     */
+    void approveCapaRootCause(Long id, String comment);
+
+    /**
+     * CAPA 措施审批（BOTH 模式专用）。
+     * 8D 完成 D5 措施制定后需要 CAPA 审批措施方案，审批通过后 8D 方可推进至 D6。
+     */
+    void approveCapaMeasures(Long id, String comment);
 
     /** 异常闭环（增强前置条件：全部整改计划/改善措施完成 + 最新验证通过 + 8D D8完成（若含8D）） */
     void close(Long id, ExceptionCloseDTO dto);
@@ -55,6 +86,12 @@ public interface ExceptionService {
      * 闭环前置条件检查（逐项返回 PASS/FAIL/NA），供前端实时展示。
      */
     CloseReadinessVO closeReadiness(Long id);
+
+    /**
+     * BOTH 模式 CAPA 相位审批就绪检查。
+     * 返回当前相位、当前用户是否有审批权限及详细说明，供前端实时展示审批面板。
+     */
+    CapaPhaseApprovalReadinessVO capaPhaseApprovalReadiness(Long id);
 
     /**
      * 根据来源记录 ID（如 material_inspection.id）查找已关联的异常单 ID。

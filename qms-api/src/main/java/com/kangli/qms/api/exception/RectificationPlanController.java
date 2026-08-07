@@ -69,6 +69,13 @@ public class RectificationPlanController {
         if (plan.getStatus() == null) {
             plan.setStatus("待执行");
         }
+        // 整改计划负责人：若前端未指定，默认设置为当前登录用户（质量审核人员验收），同时确保 ownerName 不被前端窜改
+        if (plan.getOwnerId() == null) {
+            plan.setOwnerId(loginUser.getUserId());
+            plan.setOwnerName(loginUser.getRealName());
+        } else if (plan.getOwnerName() == null || plan.getOwnerName().isEmpty()) {
+            plan.setOwnerName(loginUser.getRealName());
+        }
         rectificationPlanService.save(plan);
         if (plan.getPlanNo() == null || plan.getPlanNo().isEmpty()) {
             plan.setPlanNo("RP" + String.format("%06d", plan.getId()));

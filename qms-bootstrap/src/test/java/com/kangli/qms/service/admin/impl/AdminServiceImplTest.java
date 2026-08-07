@@ -1,6 +1,8 @@
 package com.kangli.qms.service.admin.impl;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.kangli.qms.common.PageResult;
 import com.kangli.qms.service.admin.dto.RolePermissionRequest;
 import com.kangli.qms.service.admin.dto.RoleCreateRequest;
 import com.kangli.qms.service.admin.dto.AdminActionRequest;
@@ -29,6 +31,31 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 class AdminServiceImplTest {
+
+    @Test
+    void listAuditLogs_pagesSystemAndNotificationConfigAudits() {
+        SysUserMapper userMapper = mock(SysUserMapper.class);
+        SysRoleMapper roleMapper = mock(SysRoleMapper.class);
+        SysRolePermissionMapper permissionMapper = mock(SysRolePermissionMapper.class);
+        AuditLogMapper auditLogMapper = mock(AuditLogMapper.class);
+        AdminServiceImpl service = new AdminServiceImpl(userMapper, roleMapper, permissionMapper, auditLogMapper, mock(RedisUtil.class));
+        AuditLog notificationAudit = new AuditLog();
+        notificationAudit.setTableName("notification_config");
+        notificationAudit.setOperationType("UPDATE_NOTIFICATION_CONFIG");
+        notificationAudit.setAfterData("{}");
+        when(auditLogMapper.selectPage(any(Page.class), any(Wrapper.class))).thenAnswer(invocation -> {
+            Page<AuditLog> page = invocation.getArgument(0);
+            page.setRecords(List.of(notificationAudit));
+            page.setTotal(1L);
+            return page;
+        });
+
+        PageResult<AuditLog> result = service.listAuditLogs(1, 10);
+
+        assertEquals(1L, result.getTotal());
+        assertEquals("notification_config", result.getList().get(0).getTableName());
+        assertEquals("通知配置已更新（历史记录）", result.getList().get(0).getOperationContent());
+    }
 
     @Test
     void createUser_shouldUseDefaultPasswordWhenPasswordIsBlank() {
@@ -95,6 +122,7 @@ class AdminServiceImplTest {
         verify(auditLogMapper).insert(auditCaptor.capture());
         assertEquals(101L, auditCaptor.getValue().getRecordId());
         assertEquals("UPDATE_ROLE_PERMISSION", auditCaptor.getValue().getOperationType());
+        assertEquals("角色“操作员”的权限已调整", auditCaptor.getValue().getOperationContent());
     }
 
     @Test

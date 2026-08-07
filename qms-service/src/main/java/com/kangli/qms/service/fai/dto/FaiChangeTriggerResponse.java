@@ -6,15 +6,13 @@ import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serializable;
-
 /**
  * 变更触发响应（M3）。
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
 @ApiModel(description = "变更触发响应")
-public class FaiChangeTriggerResponse extends FaiChangeTrigger implements Serializable {
+public class FaiChangeTriggerResponse extends FaiChangeTrigger {
 
     private static final long serialVersionUID = 1L;
 

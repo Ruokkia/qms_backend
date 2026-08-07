@@ -1,10 +1,12 @@
 package com.kangli.qms.domain.exception.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
+import com.kangli.qms.domain.exception.typehandler.JsonbTypeHandler;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -26,11 +28,33 @@ public class Exception8d implements Serializable {
     /** 关联异常单ID */
     private Long exceptionId;
 
-    /** 当前步骤：D1-D8 */
+    /** 当前步骤：8D 为 D0-D8；CAPA 流程当前阶段另见 capaCurrentStep */
     private String currentStep;
 
-    /** D1 团队成立 */
+    /** D0 质量部发起说明（立案情由 / 不良现象概述） */
+    private String d0Symptom;
+
+    /** D0 发起责任人（质量部发起者姓名） */
+    private String d0Initiator;
+
+    /** D0 发起时间 */
+    private LocalDateTime d0InitiateTime;
+
+    /** D1 团队成立（JSON 数组：成员姓名列表） — 向后兼容，姓名逗号串供列表展示 */
     private String d1Team;
+
+    /** D1 团队成员结构化列表（JSONB：[{userId, realName, roleCode}]），负责人自行组建提交 */
+    @TableField(typeHandler = JsonbTypeHandler.class)
+    private String d1Members;
+
+    /** CAPA 负责人姓名列表（JSON 数组字符串，与 8D 团队对称指派） */
+    private String capaOwner;
+
+    /** 当前阶段审批状态：DRAFT/SUBMITTED/PENDING_APPROVAL/APPROVED/REJECTED */
+    private String stepStatus;
+
+    /** CAPA 流程当前阶段：C1-C4（选 CAPA 或 8D+CAPA 时维护） */
+    private String capaCurrentStep;
 
     /** D2 问题描述（5W2H） */
     private String d2ProblemDesc;

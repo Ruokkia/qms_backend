@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kangli.qms.domain.exception.mapper.ExceptionApprovalConfigMapper">
+
+    <!-- 查询指定流程+阶段+分公司的默认配置（仅未删除） -->
+    <select id="selectDefault" resultType="com.kangli.qms.domain.exception.entity.ExceptionApprovalConfig">
+        SELECT * FROM qms.exception_approval_config
+        WHERE is_deleted = 0
+          AND process_flow = #{processFlow}
+          AND stage = #{stage}
+          AND plant_code = #{plantCode}
+        LIMIT 1
+    </select>
+
+</mapper>

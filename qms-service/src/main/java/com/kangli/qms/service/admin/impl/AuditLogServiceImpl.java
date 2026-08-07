@@ -10,6 +10,7 @@ import com.kangli.qms.service.admin.AuditLogService;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 /**
  * 审计日志服务实现 — 自动从 LoginUserHolder 取操作人，序列化前后快照落 qms.audit_log。
@@ -31,7 +32,7 @@ public class AuditLogServiceImpl extends ServiceImpl<AuditLogMapper, AuditLog> i
         log.setOperatorName(loginUser != null ? loginUser.getRealName() : "系统");
         log.setPlantCode(loginUser != null && loginUser.getPlantCode() != null
                 ? loginUser.getPlantCode().name() : null);
-        log.setOperationTime(LocalDateTime.now());
+        log.setOperationTime(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
         log.setReason(reason);
         log.setCreatedBy("AUDIT_SYSTEM");
         this.save(log);

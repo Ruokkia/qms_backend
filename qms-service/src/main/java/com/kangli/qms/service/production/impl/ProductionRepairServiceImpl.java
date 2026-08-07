@@ -6,7 +6,6 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.LoginUser;
-import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.common.PageResult;
 import com.kangli.qms.common.ResultCode;
 import com.kangli.qms.service.production.dto.ProductionRepairSaveDTO;
@@ -39,7 +38,7 @@ public class ProductionRepairServiceImpl
         implements ProductionRepairService {
 
     private static final java.util.List<String> EXCLUDED_REPAIR_STATUS =
-            java.util.List.of("待维修未提交", "待维修", "草稿");
+            java.util.Arrays.asList("待维修未提交", "待维修", "草稿");
 
     @Override
     public PageResult<ProductionRepairVO> pageQuery(int page, int size, String keyword, String process,
@@ -170,7 +169,10 @@ public class ProductionRepairServiceImpl
         String plantCode = user.getPlantCode().name();
         ProductionRepairImportResultVO result = new ProductionRepairImportResultVO();
         List<ProductionRepairImportResultVO.FailItem> failList = new ArrayList<>();
-        int successCount = 0, duplicateSkip = 0, pendingCount = 0, rowIndex = 0;
+        int successCount = 0;
+        int duplicateSkip = 0;
+        int pendingCount = 0;
+        int rowIndex = 0;
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "导入文件为空");
         }

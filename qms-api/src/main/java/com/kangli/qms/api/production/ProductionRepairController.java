@@ -91,7 +91,7 @@ public class ProductionRepairController {
         return R.ok(productionRepairService.importExcel(file, loginUser), "导入完成");
     }
 
-    private static final java.util.Set<String> MANAGER_ROLES = java.util.Set.of("R00", "R04", "R06");
+    private static final java.util.Set<String> MANAGER_ROLES = new java.util.HashSet<>(java.util.Arrays.asList("R00", "R04", "R06"));
 
     private void assertManager(LoginUser user) {
         if (user.getRoleCode() == null || !MANAGER_ROLES.contains(user.getRoleCode())) {

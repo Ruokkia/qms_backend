@@ -8,6 +8,7 @@
         <dependency><groupId>com.kangli</groupId><artifactId>qms-service</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.kangli</groupId><artifactId>qms-domain</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.kangli</groupId><artifactId>qms-common</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-websocket</artifactId></dependency>
         <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
         <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
         <dependency><groupId>com.github.xiaoymin</groupId><artifactId>knife4j-spring-boot-starter</artifactId></dependency>
@@ -25,6 +26,19 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration><excludes><exclude><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId></exclude></excludes></configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-maven-plugin</artifactId>
+                <version>9.22.3</version>
+                <configuration>
+                    <url>jdbc:postgresql://127.0.0.1:5432/qms?currentSchema=qms</url>
+                    <user>postgres</user>
+                    <password>123</password>
+                    <schemas><schema>qms</schema></schemas>
+                    <locations><location>classpath:db/migration</location></locations>
+                    <createSchemas>true</createSchemas>
+                </configuration>
             </plugin>
         </plugins>
     </build>

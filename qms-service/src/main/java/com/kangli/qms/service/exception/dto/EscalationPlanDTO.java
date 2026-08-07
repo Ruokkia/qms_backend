@@ -10,5 +10,7 @@ public class EscalationPlanDTO {
     private String actionPlan;
     @NotBlank(message = "请填写责任人")
     private String ownerName;
+    /** 责任人 ID（点对点通知使用） */
+    private Long ownerId;
     private LocalDate dueDate;
 }

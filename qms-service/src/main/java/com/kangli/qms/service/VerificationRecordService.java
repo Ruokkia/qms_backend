@@ -1,7 +1,0 @@
-package com.kangli.qms.service;
-
-import com.baomidou.mybatisplus.extension.service.IService;
-import com.kangli.qms.entity.VerificationRecord;
-
-public interface VerificationRecordService extends IService<VerificationRecord> {
-}

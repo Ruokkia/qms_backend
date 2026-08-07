@@ -1,11 +1,16 @@
 package com.kangli.qms.api.admin;
 
+import com.kangli.qms.common.LoginUser;
+import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.common.R;
+import com.kangli.qms.common.PageResult;
+import com.kangli.qms.domain.notification.entity.NotificationConfig;
 import com.kangli.qms.service.admin.dto.AdminActionRequest;
 import com.kangli.qms.service.admin.dto.AdminUserRequest;
 import com.kangli.qms.service.admin.dto.RolePermissionRequest;
 import com.kangli.qms.service.admin.dto.RoleCreateRequest;
 import com.kangli.qms.service.admin.AdminService;
+import com.kangli.qms.service.notification.NotificationConfigService;
 import com.kangli.qms.domain.admin.vo.AdminUserVO;
 import com.kangli.qms.domain.admin.vo.RolePermissionVO;
 import io.swagger.annotations.Api;
@@ -15,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 import javax.servlet.http.HttpServletRequest;
 import javax.validation.Valid;
 import java.util.List;
+import java.util.Map;
 import com.kangli.qms.domain.admin.entity.AuditLog;
 
 @RestController
@@ -23,7 +29,11 @@ import com.kangli.qms.domain.admin.entity.AuditLog;
 @Validated
 public class AdminController {
     private final AdminService adminService;
-    public AdminController(AdminService adminService) { this.adminService = adminService; }
+    private final NotificationConfigService notificationConfigService;
+    public AdminController(AdminService adminService, NotificationConfigService notificationConfigService) {
+        this.adminService = adminService;
+        this.notificationConfigService = notificationConfigService;
+    }
     @GetMapping("/users") @ApiOperation("账号列表")
     public R<List<AdminUserVO>> users() { return R.ok(adminService.listUsers()); }
     @PostMapping("/users") @ApiOperation("创建账号")
@@ -49,5 +59,31 @@ public class AdminController {
     @DeleteMapping("/roles/{roleCode}") @ApiOperation("删除角色")
     public R<Void> deleteRole(@PathVariable String roleCode, @Valid @RequestBody AdminActionRequest request, HttpServletRequest servletRequest) { adminService.deleteRole(roleCode, request, servletRequest.getRemoteAddr()); return R.ok(); }
     @GetMapping("/audit") @ApiOperation("管理审计日志")
-    public R<List<AuditLog>> audit() { return R.ok(adminService.listAuditLogs()); }
+    public R<PageResult<AuditLog>> audit(@RequestParam(defaultValue = "1") long page,
+                                         @RequestParam(defaultValue = "10") long size) {
+        return R.ok(adminService.listAuditLogs(page, size));
+    }
+
+    // ==================== 通知配置 ====================
+
+    @GetMapping("/notification-config") @ApiOperation("通知配置列表")
+    public R<List<NotificationConfig>> notificationConfigList() {
+        return R.ok(notificationConfigService.listAll());
+    }
+
+    @PutMapping("/notification-config/{id}") @ApiOperation("更新通知配置")
+    public R<NotificationConfig> notificationConfigUpdate(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest servletRequest) {
+        String reason = (String) body.getOrDefault("reason", "");
+        NotificationConfig config = new NotificationConfig();
+        config.setRoleCodes((String) body.get("roleCodes"));
+        config.setSeverityExtraRoles((String) body.get("severityExtraRoles"));
+        Object enabledObj = body.get("enabled");
+        config.setEnabled(enabledObj != null ? Integer.valueOf(enabledObj.toString()) : null);
+        LoginUser loginUser = LoginUserHolder.get();
+        String operator = loginUser != null ? loginUser.getRealName() : "系统";
+        return R.ok(notificationConfigService.update(id, config, operator, servletRequest.getRemoteAddr(), reason));
+    }
 }

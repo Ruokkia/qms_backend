@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kangli.qms.domain.exception.mapper.Exception8dStepLogMapper">
+
+    <!-- 按异常单ID查询步骤留痕（仅未删除，按操作时间升序，还原流程顺序） -->
+    <select id="selectByExceptionId" resultType="com.kangli.qms.domain.exception.entity.Exception8dStepLog">
+        SELECT * FROM qms.exception_8d_step_log
+        WHERE is_deleted = 0
+          AND exception_id = #{exceptionId}
+        ORDER BY operated_at ASC, id ASC
+    </select>
+
+    <!-- 将该异常单最近一条指定阶段的 NEXT_STEP 留痕标记为待审 -->
+    <update id="markPendingApproval">
+        UPDATE qms.exception_8d_step_log
+        SET approval_status = 'PENDING_APPROVAL'
+        WHERE id = (
+            SELECT id FROM qms.exception_8d_step_log
+            WHERE is_deleted = 0
+              AND exception_id = #{exceptionId}
+              AND step = #{stage}
+              AND operation = 'NEXT_STEP'
+            ORDER BY operated_at DESC, id DESC
+            LIMIT 1
+        )
+    </update>
+
+</mapper>

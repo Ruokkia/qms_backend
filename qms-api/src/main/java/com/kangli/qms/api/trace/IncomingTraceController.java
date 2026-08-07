@@ -26,11 +26,17 @@ public class IncomingTraceController {
         return R.ok(service.tree(rootBarcode, direction));
     }
 
-    /** 单节点详情（新增 type 参数：fg=成品表, mi=物料表） */
+    /**
+     * 单节点详情。
+     *
+     * <p>id 支持条码编码（fg:{barcode} / mi:{barcode}）与旧版数字主键；
+     * sonLotNo 为半成品子项批号（可选），优先用其查成品表。</p>
+     */
     @GetMapping("/nodes/{id}")
-    public R<Map<String, Object>> node(@PathVariable long id,
-                                       @RequestParam String type) {
-        return R.ok(service.node(id, type));
+    public R<Map<String, Object>> node(@PathVariable String id,
+                                       @RequestParam String type,
+                                       @RequestParam(required = false) String sonLotNo) {
+        return R.ok(service.node(id, type, sonLotNo));
     }
 
     /** 所有节点列表 */

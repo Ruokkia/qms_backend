@@ -1,6 +1,5 @@
 package com.kangli.qms.service.spc.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.ResultCode;
@@ -18,6 +17,7 @@ import com.kangli.qms.domain.spc.mapper.SpcSubgroupMapper;
 import com.kangli.qms.service.spc.SpcCapabilityService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -57,7 +57,7 @@ public class SpcCapabilityServiceImpl implements SpcCapabilityService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(propagation = Propagation.NESTED, rollbackFor = Exception.class)
     public SpcCapabilityResultDTO recalcCapability(Long paramId, String plantCode) {
         SpcParameter param = parameterMapper.selectById(paramId);
         if (param == null || param.getIsDeleted() == 1) {
@@ -86,6 +86,15 @@ public class SpcCapabilityServiceImpl implements SpcCapabilityService {
         if (coef == null) {
             throw new BusinessException(ResultCode.INTERNAL_ERROR, "SPC 系数表未初始化 n=" + n);
         }
+        // 防御性校验：c4 / d2 为 NULL 或 0 会触发除零异常，必须提前拦截给出可读错误
+        if (coef.getC4() == null || coef.getC4().compareTo(BigDecimal.ZERO) == 0) {
+            throw new BusinessException(ResultCode.INTERNAL_ERROR,
+                    "SPC 系数 c4 缺失或为零，无法计算短期标准差 (n=" + n + ")，请执行系数修正迁移");
+        }
+        if (coef.getD2() == null || coef.getD2().compareTo(BigDecimal.ZERO) == 0) {
+            throw new BusinessException(ResultCode.INTERNAL_ERROR,
+                    "SPC 系数 d2 缺失或为零 (n=" + n + ")，请执行系数修正迁移");
+        }
         if (param.getUpperSpecLimit() == null || param.getLowerSpecLimit() == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "参数未配置规格上下限，无法计算能力指数");
         }
@@ -110,7 +119,7 @@ public class SpcCapabilityServiceImpl implements SpcCapabilityService {
         }).sum();
         int N = allValues.size();
         double sigmaLongD = N > 1 ? Math.sqrt(sumSq / (N - 1)) : 0d;
-        BigDecimal sigmaLong = new BigDecimal(sigmaLongD).setScale(SCALE, RoundingMode.HALF_UP);
+        BigDecimal sigmaLong = BigDecimal.valueOf(sigmaLongD).setScale(SCALE, RoundingMode.HALF_UP);
 
         BigDecimal pp = scale((usl.subtract(lsl)).divide(SIX.multiply(sigmaLong), SCALE, RoundingMode.HALF_UP));
         BigDecimal ppu = scale((usl.subtract(mu)).divide(THREE.multiply(sigmaLong), SCALE, RoundingMode.HALF_UP));
@@ -158,7 +167,7 @@ public class SpcCapabilityServiceImpl implements SpcCapabilityService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(propagation = Propagation.NESTED, rollbackFor = Exception.class)
     public void clear(Long paramId, String plantCode) {
         capabilityMapper.delete(Wrappers.lambdaQuery(SpcCapability.class)
                 .eq(SpcCapability::getParamId, paramId)

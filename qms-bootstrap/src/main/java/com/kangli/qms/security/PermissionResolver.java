@@ -46,8 +46,9 @@ public class PermissionResolver {
         if (isPersonalNotificationRead(requestUri, method)) {
             return new PermissionRequirement(moduleCode, PermissionAction.VIEW);
         }
-        if (isExceptionApproval(requestUri, method)) {
-            return new PermissionRequirement(moduleCode, PermissionAction.APPROVE);
+        PermissionAction approvalAction = exceptionApprovalAction(requestUri, method);
+        if (approvalAction != null) {
+            return new PermissionRequirement(moduleCode, approvalAction);
         }
         return new PermissionRequirement(moduleCode, actionFor(method));
     }
@@ -57,13 +58,32 @@ public class PermissionResolver {
                 && requestUri.matches("/api/v1/admin/roles/[^/]+");
     }
 
-    /** 关单和供应商升级审核会改变质量结论，不能与日常整改录入共用 EDIT 权限。 */
-    private boolean isExceptionApproval(String requestUri, String method) {
-        if (!"POST".equalsIgnoreCase(method)) {
-            return false;
+    /** 关单、升级审核/关单、8D 编辑/推进、重置等细粒度操作。 */
+    private PermissionAction exceptionApprovalAction(String requestUri, String method) {
+        // 8D 报告编辑（PUT）
+        if ("PUT".equalsIgnoreCase(method) && requestUri.matches("/api/v1/exceptions/[^/]+/eight-d(?:/[^/]+)?")) {
+            return PermissionAction.EDIT_8D;
         }
-        return requestUri.matches("/api/v1/exceptions/[^/]+/close")
-                || requestUri.matches("/api/v1/escalations/[^/]+/(review|close)");
+        if (!"POST".equalsIgnoreCase(method)) {
+            return null;
+        }
+        // 8D 下一步推进
+        if (requestUri.matches("/api/v1/exceptions/[^/]+/eight-d/next-step")) {
+            return PermissionAction.NEXT_STEP_8D;
+        }
+        if (requestUri.matches("/api/v1/exceptions/[^/]+/close")) {
+            return PermissionAction.CLOSE;
+        }
+        if (requestUri.matches("/api/v1/escalations/[^/]+/review")) {
+            return PermissionAction.ESCALATION_REVIEW;
+        }
+        if (requestUri.matches("/api/v1/escalations/[^/]+/close")) {
+            return PermissionAction.ESCALATION_CLOSE;
+        }
+        if (requestUri.matches("/api/v1/exceptions/[^/]+/reset")) {
+            return PermissionAction.RESET;
+        }
+        return null;
     }
 
     /** Marking one's own notification read is a personal inbox action, not notification administration. */

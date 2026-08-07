@@ -2,6 +2,8 @@ package com.kangli.qms.domain.exception.vo;
 
 import com.kangli.qms.domain.exception.entity.ExceptionOrder;
 import com.kangli.qms.domain.exception.entity.ImprovementAction;
+import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
+import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
 import com.kangli.qms.domain.incoming.entity.MaterialInspection;
 import com.kangli.qms.domain.exception.entity.RectificationPlan;
 import com.kangli.qms.domain.exception.entity.VerificationRecord;
@@ -10,7 +12,6 @@ import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serializable;
 import java.util.List;
 
 /**
@@ -19,7 +20,7 @@ import java.util.List;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @ApiModel(description = "异常单详情（含改善措施+验证记录+8D+关联来料）")
-public class ExceptionDetailVO extends ExceptionOrder implements Serializable {
+public class ExceptionDetailVO extends ExceptionOrder {
 
     private static final long serialVersionUID = 1L;
 
@@ -46,5 +47,11 @@ public class ExceptionDetailVO extends ExceptionOrder implements Serializable {
 
     @ApiModelProperty(value = "关联来料检验记录（仅 sourceType=来料不良 时填充）")
     private MaterialInspection materialInspection;
+
+    @ApiModelProperty(value = "关联首件检验记录（仅 sourceType=首件不良 时填充）")
+    private FaiInspectionRecord faiInspection;
+
+    @ApiModelProperty(value = "关联成品检验记录（仅 sourceType=成品不良 时填充）")
+    private FinishedGoodsInspection finishedGoodsInspection;
 }
 
