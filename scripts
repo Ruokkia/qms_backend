@@ -1,0 +1,8 @@
+-- 补全演示标准的 item_type/item_code/item_name（V20260802130000001 重建时遗漏）
+-- 仅处理 item_type IS NULL 且 is_deleted=0 的记录，从 material_code/material_name 回填
+UPDATE qms.fai_inspection_standard
+SET item_type = 'MATERIAL',
+    item_code = material_code,
+    item_name = material_name
+WHERE is_deleted = 0
+  AND item_type IS NULL;
