@@ -23,6 +23,7 @@ import com.kangli.qms.service.notification.NotificationConfigService;
 import com.kangli.qms.service.notification.NotificationService;
 import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
 import com.kangli.qms.service.notification.enums.NotificationTypeEnum;
+import com.kangli.qms.service.notification.helper.NotificationTemplateHelper;
 import com.kangli.qms.domain.exception.vo.EscalationCheckResultVO;
 import com.kangli.qms.domain.exception.vo.TriggeredSupplierVO;
 import lombok.extern.slf4j.Slf4j;
@@ -204,21 +205,16 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
             LoginUser loginUser = getCurrentLoginUser();
             String scenarioCode = NotificationTypeEnum.ESCALATION_OWNER_ASSIGNED.getCode();
             String level = "提醒";
-            String title = "升级措施指派：" + escalation.getEscalationReason();
-            String content = "您被指定为升级措施责任人（措施：" + dto.getActionPlan()
-                    + "；截止日期：" + dto.getDueDate() + "），请及时推进。";
 
             // 1. 点对点通知被指派人
-            NotificationCreateDTO n = new NotificationCreateDTO();
-            n.setUserId(dto.getOwnerId());
+            NotificationCreateDTO n = NotificationTemplateHelper.forEscalationOwner(
+                    dto.getOwnerId(), escalation.getPlantCode(),
+                    escalation.getEscalationReason(), escalation.getId(),
+                    dto.getActionPlan(),
+                    dto.getDueDate() != null ? dto.getDueDate().toString() : "",
+                    loginUser.getRealName());
             n.setType(scenarioCode);
             n.setLevel(level);
-            n.setTitle(title);
-            n.setContent(content);
-            n.setBusinessType("ESCALATION");
-            n.setBusinessId(escalation.getId());
-            n.setPlantCode(escalation.getPlantCode());
-            n.setCreatedBy(loginUser.getRealName());
             notificationService.createNotification(n);
 
             // 2. 按配置抄送额外角色
@@ -229,16 +225,7 @@ public class EscalationServiceImpl extends ServiceImpl<EscalationMapper, Escalat
                     if (ccUserId.equals(dto.getOwnerId())) {
                         continue;
                     }
-                    NotificationCreateDTO cc = new NotificationCreateDTO();
-                    cc.setUserId(ccUserId);
-                    cc.setType(scenarioCode);
-                    cc.setLevel(level);
-                    cc.setTitle("【抄送】" + title);
-                    cc.setContent(content + "（通知对象：" + dto.getOwnerName() + "）");
-                    cc.setBusinessType("ESCALATION");
-                    cc.setBusinessId(escalation.getId());
-                    cc.setPlantCode(escalation.getPlantCode());
-                    cc.setCreatedBy(loginUser.getRealName());
+                    NotificationCreateDTO cc = NotificationTemplateHelper.forCc(n, ccUserId, dto.getOwnerName());
                     notificationService.createNotification(cc);
                 }
             }

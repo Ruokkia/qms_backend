@@ -186,7 +186,7 @@ public class AdminServiceImpl implements AdminService {
         long safeSize = Math.min(100, Math.max(1, size));
         Page<AuditLog> result = auditLogMapper.selectPage(new Page<>(safePage, safeSize),
                 new LambdaQueryWrapper<AuditLog>()
-                        .in(AuditLog::getTableName, Arrays.asList("sys_admin", "notification_config"))
+                        .in(AuditLog::getTableName, Arrays.asList("sys_admin", "notification_config", "exception_approval_config"))
                         .orderByDesc(AuditLog::getOperationTime));
         result.getRecords().forEach(this::fillHistoricalAuditContent);
         return PageResult.of(result);

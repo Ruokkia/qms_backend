@@ -24,11 +24,15 @@ public interface ExceptionApprovalConfigService extends IService<ExceptionApprov
 
     /**
      * 保存或更新一条审批配置（系统管理模块 CRUD）。
+     *
+     * @param clientIp 客户端真实 IP，用于写入审计日志
      */
-    void saveOrUpdateConfig(ExceptionApprovalConfigDTO dto);
+    void saveOrUpdateConfig(ExceptionApprovalConfigDTO dto, String clientIp);
 
     /**
      * 逻辑删除一条配置。
+     *
+     * @param clientIp 客户端真实 IP，用于写入审计日志
      */
-    void deleteConfig(Long id);
+    void deleteConfig(Long id, String clientIp);
 }

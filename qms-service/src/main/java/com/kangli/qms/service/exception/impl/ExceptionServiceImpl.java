@@ -18,6 +18,7 @@ import com.kangli.qms.service.exception.dto.ExceptionUpdateDTO;
 import com.kangli.qms.domain.admin.entity.AuditLog;
 import com.kangli.qms.domain.admin.vo.AdminUserVO;
 import com.kangli.qms.domain.exception.entity.Exception8d;
+import com.kangli.qms.domain.exception.entity.ExceptionApprovalConfig;
 import com.kangli.qms.domain.exception.entity.ExceptionOrder;
 import com.kangli.qms.domain.exception.entity.Escalation;
 import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
@@ -43,10 +44,12 @@ import com.kangli.qms.domain.exception.mapper.VerificationRecordMapper;
 import com.kangli.qms.service.admin.AuditLogService;
 import com.kangli.qms.service.admin.AdminService;
 import com.kangli.qms.service.exception.ExceptionService;
+import com.kangli.qms.service.exception.ExceptionApprovalConfigService;
 import com.kangli.qms.service.notification.NotificationConfigService;
 import com.kangli.qms.service.notification.NotificationService;
 import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
 import com.kangli.qms.service.notification.enums.NotificationTypeEnum;
+import com.kangli.qms.service.notification.helper.NotificationTemplateHelper;
 import com.kangli.qms.domain.exception.vo.CapaPhaseApprovalReadinessVO;
 import com.kangli.qms.domain.exception.vo.CloseReadinessVO;
 import com.kangli.qms.domain.exception.vo.EightDVO;
@@ -113,6 +116,10 @@ public class ExceptionServiceImpl implements ExceptionService {
     private final QualityExceptionRuleEvaluator qualityRuleEvaluator;
     private final AdminService adminService;
     private final NotificationConfigService notificationConfigService;
+
+    /** 阶段级审批配置服务（CAPA 审批门禁复用，与 8D 共享同一张配置表） */
+    @Autowired
+    private ExceptionApprovalConfigService approvalConfigService;
 
     public ExceptionServiceImpl(ExceptionOrderMapper exceptionOrderMapper,
                                  ImprovementActionMapper improvementActionMapper,
@@ -738,6 +745,18 @@ public class ExceptionServiceImpl implements ExceptionService {
             throw new BusinessException(ResultCode.BAD_REQUEST,
                     "当前 CAPA 相位为「" + currentLabel + "」，不可执行" + phaseLabel + "审批。"
                             + "审批推进顺序：根因分析 → 根因审批 → 措施审批 → D6-D8 → 验证闭环");
+        }
+
+        // CAPA 审批门禁：按系统管理「审批配置」(CAPA 维度) 校验审批角色。
+        // 审批动作 → 配置阶段码 映射（与审批配置页面 CAPA 维度一致）：
+        //   根因审批(ROOT_CAUSE_APPROVED) → C1
+        //   措施审批(MEASURES_APPROVED)   → C2
+        // 仅当配置存在且 needApproval=1 时才限定审批角色，否则保持原有「任意有权限角色可审批」行为。
+        String capaConfigStage = ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED.equals(targetPhase) ? "C1" : "C2";
+        ExceptionApprovalConfig capaConfig = approvalConfigService.resolveConfig(
+                "CAPA", capaConfigStage, order.getPlantCode());
+        if (capaConfig != null && capaConfig.getNeedApproval() != null && capaConfig.getNeedApproval() == 1) {
+            ExceptionModuleHelper.requireApprovalPrivilege(capaConfig.getApproverRole());
         }
 
         ExceptionOrder update = new ExceptionOrder();
@@ -1373,19 +1392,8 @@ public class ExceptionServiceImpl implements ExceptionService {
             }
 
             for (Long userId : recipientIds) {
-                NotificationCreateDTO dto = new NotificationCreateDTO();
-                dto.setUserId(userId);
-                dto.setType(NotificationTypeEnum.EXCEPTION_CREATED.getCode());
-                dto.setLevel(order.getNotificationLevel());
-                dto.setTitle(("严重".equals(order.getSeverity()) ? "【严重】" : "")
-                        + "新异常单 " + order.getExceptionNo());
-                dto.setContent("判定：" + order.getRuleReason()
-                        + "；待质量部门发起整改"
-                        + "；整改截止：" + order.getDeadline());
-                dto.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-                dto.setBusinessId(order.getId());
-                dto.setPlantCode(order.getPlantCode());
-                dto.setCreatedBy(loginUser.getRealName());
+                NotificationCreateDTO dto = NotificationTemplateHelper.forExceptionCreated(
+                        userId, order.getPlantCode(), order, loginUser.getRealName());
                 notificationService.createNotification(dto);
             }
         } catch (Exception e) {
@@ -1405,21 +1413,12 @@ public class ExceptionServiceImpl implements ExceptionService {
 
             String scenarioCode = NotificationTypeEnum.EIGHT_D_LEADER_ASSIGNED.getCode();
             String level = "提醒";
-            String title = "整改任务指派：" + order.getExceptionNo();
-            String content = "您被指定为异常单 " + order.getExceptionNo()
-                    + " 的整改负责人（流程：" + dto.getProcessType() + "），请在 D1 阶段组建团队。";
 
             // 1. 点对点通知被指派人
-            NotificationCreateDTO n = new NotificationCreateDTO();
-            n.setUserId(dto.getOwnerId());
-            n.setType(scenarioCode);
-            n.setLevel(level);
-            n.setTitle(title);
-            n.setContent(content);
-            n.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-            n.setBusinessId(exceptionId);
-            n.setPlantCode(order.getPlantCode());
-            n.setCreatedBy(loginUser.getRealName());
+            NotificationCreateDTO n = NotificationTemplateHelper.for8DLeaderAssigned(
+                    dto.getOwnerId(), order.getPlantCode(), order, loginUser.getRealName());
+            n.setContent("您被指定为异常单 " + order.getExceptionNo()
+                    + " 的整改负责人（流程：" + dto.getProcessType() + "），请在 D1 阶段组建团队。");
             notificationService.createNotification(n);
 
             // 2. 按通知配置抄送额外角色（跳过被指派人，避免重复）
@@ -1434,8 +1433,9 @@ public class ExceptionServiceImpl implements ExceptionService {
                     cc.setUserId(ccUserId);
                     cc.setType(scenarioCode);
                     cc.setLevel(level);
-                    cc.setTitle("【抄送】" + title);
-                    cc.setContent(content + "（通知对象：" + dto.getOwnerName() + "）");
+                    cc.setTitle("【抄送】异常单 " + order.getExceptionNo() + " 已指定整改负责人");
+                    cc.setContent("异常单【" + order.getExceptionNo() + "】（流程：" + dto.getProcessType()
+                            + "）已指定 " + dto.getOwnerName() + " 为整改负责人，请在 D1 阶段组建团队。");
                     cc.setBusinessType(BUSINESS_TYPE_EXCEPTION);
                     cc.setBusinessId(exceptionId);
                     cc.setPlantCode(order.getPlantCode());
@@ -1531,23 +1531,28 @@ public class ExceptionServiceImpl implements ExceptionService {
         if (deleted != null) {
             // 已软删除则恢复为初始 D1 状态（保留发起阶段填写的 D0 立案信息与已指派团队）
             exception8dMapper.restoreDeletedById(deleted.getId());
-            deleted.setCurrentStep("D1");
-            deleted.setStepStatus("DRAFT");
-            deleted.setD1Team(null);
-            deleted.setD1Members(null);
-            deleted.setD2ProblemDesc(null);
-            deleted.setD3Containment(null);
-            deleted.setD4RootCause(null);
-            deleted.setD5Corrective(null);
-            deleted.setD6Implementation(null);
-            deleted.setD7Preventive(null);
-            deleted.setD8Closure(null);
+            // 用 UpdateWrapper 显式 set null，绕过 MyBatis-Plus 默认 NOT_NULL 策略
+            // （否则 setXxx(null) 的字段不会被 updateById 更新，D2-D8 历史值无法清空）
+            com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<Exception8d> uw =
+                    new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<>();
+            uw.eq("id", deleted.getId());
+            uw.set("current_step", "D1");
+            uw.set("step_status", "DRAFT");
+            uw.set("d1_team", null);
+            uw.set("d1_members", null);
+            uw.set("d2_problem_desc", null);
+            uw.set("d3_containment", null);
+            uw.set("d4_root_cause", null);
+            uw.set("d5_corrective", null);
+            uw.set("d6_implementation", null);
+            uw.set("d7_preventive", null);
+            uw.set("d8_closure", null);
             // 保留 D0 立案说明与发起责任人、发起时指派的 8D 团队/CAPA 负责人
-            deleted.setCapaOwner(deleted.getCapaOwner());
-            deleted.setCapaCurrentStep("CAPA".equals(order.getProcessType()) || "BOTH".equals(order.getProcessType()) ? "C1" : null);
-            deleted.setIsDeleted((short) 0);
-            deleted.setUpdatedBy(loginUser.getRealName());
-            exception8dMapper.updateById(deleted);
+            uw.set("capa_owner", deleted.getCapaOwner());
+            uw.set("capa_current_step", "CAPA".equals(order.getProcessType()) || "BOTH".equals(order.getProcessType()) ? "C1" : null);
+            uw.set("is_deleted", 0);
+            uw.set("updated_by", loginUser.getRealName());
+            exception8dMapper.update(null, uw);
             return;
         }
         initializeEightD(order, loginUser, dto, initiateTime);
@@ -1616,13 +1621,13 @@ public class ExceptionServiceImpl implements ExceptionService {
             for (Long userId : userIds) {
                 NotificationCreateDTO dto = new NotificationCreateDTO();
                 dto.setUserId(userId);
+                dto.setPlantCode(escalation.getPlantCode());
                 dto.setType(scenarioCode);
                 dto.setLevel("严重");
                 dto.setTitle("供应商重复问题待升级审核");
                 dto.setContent(escalation.getEscalationReason() + "；建议措施：" + escalation.getEscalationAction());
                 dto.setBusinessType("ESCALATION");
                 dto.setBusinessId(escalation.getId());
-                dto.setPlantCode(escalation.getPlantCode());
                 dto.setCreatedBy(loginUser.getRealName());
                 notificationService.createNotification(dto);
             }
@@ -1642,29 +1647,15 @@ public class ExceptionServiceImpl implements ExceptionService {
                         if (userId.equals(loginUser.getUserId())) {
                             continue;
                         }
-                        NotificationCreateDTO managerNotification = new NotificationCreateDTO();
-                        managerNotification.setUserId(userId);
+                        NotificationCreateDTO managerNotification = NotificationTemplateHelper.forExceptionClosedToManager(
+                                userId, order.getPlantCode(), order, loginUser.getRealName());
                         managerNotification.setType(scenarioCode);
-                        managerNotification.setLevel("提醒");
-                        managerNotification.setTitle("异常单" + order.getExceptionNo() + " 已闭环");
-                        managerNotification.setContent("异常单已完成闭环，操作人：" + loginUser.getRealName());
-                        managerNotification.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-                        managerNotification.setBusinessId(order.getId());
-                        managerNotification.setPlantCode(order.getPlantCode());
-                        managerNotification.setCreatedBy(loginUser.getRealName());
                         notificationService.createNotification(managerNotification);
                     }
                 }
             }
-            NotificationCreateDTO dto = new NotificationCreateDTO();
-            dto.setUserId(loginUser.getUserId());
-            dto.setType(NotificationTypeEnum.EXCEPTION_STATUS_CHANGED.getCode());
-            dto.setTitle("异常单 " + order.getExceptionNo() + " 状态变更");
-            dto.setContent("新状态：" + newStatus);
-            dto.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-            dto.setBusinessId(order.getId());
-            dto.setPlantCode(order.getPlantCode());
-            dto.setCreatedBy(loginUser.getRealName());
+            NotificationCreateDTO dto = NotificationTemplateHelper.forExceptionStatusChanged(
+                    loginUser.getUserId(), order.getPlantCode(), order, newStatus, loginUser.getRealName());
             notificationService.createNotification(dto);
         } catch (Exception e) {
             log.warn("发送异常单状态变更通知失败：exceptionId={}", order.getId(), e);
@@ -1687,15 +1678,11 @@ public class ExceptionServiceImpl implements ExceptionService {
             }
             String operator = ExceptionModuleHelper.currentOperator();
             for (Long uid : userIds) {
-                NotificationCreateDTO dto = new NotificationCreateDTO();
-                dto.setUserId(uid);
+                NotificationCreateDTO dto = NotificationTemplateHelper.forExceptionStatusChanged(
+                        uid, order.getPlantCode(), order, "配置通知", operator);
                 dto.setType(scenarioCode);
                 dto.setTitle(title);
                 dto.setContent(content);
-                dto.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-                dto.setBusinessId(order.getId());
-                dto.setPlantCode(order.getPlantCode());
-                dto.setCreatedBy(operator);
                 notificationService.createNotification(dto);
             }
         } catch (Exception e) {

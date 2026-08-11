@@ -12,6 +12,7 @@ import com.kangli.qms.service.notification.NotificationConfigService;
 import com.kangli.qms.service.notification.NotificationService;
 import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
 import com.kangli.qms.service.notification.enums.NotificationTypeEnum;
+import com.kangli.qms.service.notification.helper.NotificationTemplateHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -81,22 +82,16 @@ public class RectificationPlanServiceImpl extends ServiceImpl<RectificationPlanM
 
             String scenarioCode = NotificationTypeEnum.PLAN_OWNER_ASSIGNED.getCode();
             String level = "提醒";
-            String title = "整改计划指派：" + exceptionNo;
-            String content = "您被指定为整改计划负责人（计划：" + plan.getPlanName()
-                    + "；目标：" + plan.getObjective()
-                    + "；截止日期：" + plan.getPlanEndDate() + "），请及时推进。";
 
             // 1. 点对点通知被指派人
-            NotificationCreateDTO n = new NotificationCreateDTO();
-            n.setUserId(ownerId);
+            NotificationCreateDTO n = NotificationTemplateHelper.forRectificationPlan(
+                    ownerId, plan.getPlantCode(), exceptionNo, plan.getExceptionId(),
+                    plan.getPlanName(), plan.getObjective(),
+                    plan.getPlanEndDate() != null ? plan.getPlanEndDate().toString() : "",
+                    loginUser.getRealName());
+            // 覆盖为正确的 scenarioCode（模板可能使用了默认值）
             n.setType(scenarioCode);
             n.setLevel(level);
-            n.setTitle(title);
-            n.setContent(content);
-            n.setBusinessType("EXCEPTION_ORDER");
-            n.setBusinessId(plan.getExceptionId());
-            n.setPlantCode(plan.getPlantCode());
-            n.setCreatedBy(loginUser.getRealName());
             notificationService.createNotification(n);
 
             // 2. 按配置抄送额外角色
@@ -107,16 +102,7 @@ public class RectificationPlanServiceImpl extends ServiceImpl<RectificationPlanM
                     if (ccUserId.equals(ownerId)) {
                         continue;
                     }
-                    NotificationCreateDTO cc = new NotificationCreateDTO();
-                    cc.setUserId(ccUserId);
-                    cc.setType(scenarioCode);
-                    cc.setLevel(level);
-                    cc.setTitle("【抄送】" + title);
-                    cc.setContent(content + "（通知对象：" + ownerName + "）");
-                    cc.setBusinessType("EXCEPTION_ORDER");
-                    cc.setBusinessId(plan.getExceptionId());
-                    cc.setPlantCode(plan.getPlantCode());
-                    cc.setCreatedBy(loginUser.getRealName());
+                    NotificationCreateDTO cc = NotificationTemplateHelper.forCc(n, ccUserId, ownerName);
                     notificationService.createNotification(cc);
                 }
             }

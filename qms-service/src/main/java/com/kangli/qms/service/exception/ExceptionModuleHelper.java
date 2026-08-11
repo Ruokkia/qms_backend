@@ -24,6 +24,21 @@ public final class ExceptionModuleHelper {
                 || ExceptionConstants.PROCESS_BOTH.equals(processType);
     }
 
+    /** 流程类型是否包含 CAPA（改善措施 + 验证） */
+    public static boolean processIncludesCapa(String processType) {
+        return ExceptionConstants.PROCESS_CAPA.equals(processType)
+                || ExceptionConstants.PROCESS_BOTH.equals(processType);
+    }
+
+    /**
+     * 是否为「8D + CAPA 交错」模式（BOTH）。
+     * <p>只有 BOTH 才需要 CAPA 根因审批 / 措施审批门禁；纯 8D 与纯 CAPA 各自独立推进，
+     * 不应被对方门禁拦截。</p>
+     */
+    public static boolean isBothMode(String processType) {
+        return processIncludes8D(processType) && processIncludesCapa(processType);
+    }
+
     // ==================== 当前用户获取 ====================
 
     /** 获取当前登录用户，若未获取到则抛出未认证异常 */

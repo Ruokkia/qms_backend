@@ -27,6 +27,7 @@ import com.kangli.qms.service.notification.NotificationConfigService;
 import com.kangli.qms.service.notification.NotificationService;
 import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
 import com.kangli.qms.service.notification.enums.NotificationTypeEnum;
+import com.kangli.qms.service.notification.helper.NotificationTemplateHelper;
 import com.kangli.qms.service.exception.ExceptionConstants;
 import com.kangli.qms.service.exception.ExceptionModuleHelper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -197,8 +198,8 @@ public class EightDServiceImpl implements EightDService {
         EightDStepContext ctx = resolveAndValidateNextStep(exceptionId);
         ExceptionOrder order = exceptionOrderMapper.selectById(exceptionId);
 
-        // CAPA-8D 交错推进门禁（BOTH 模式专用）
-        if (ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+        // CAPA-8D 交错推进门禁（仅 BOTH 模式专用；纯 8D 不进 CAPA 门禁）
+        if (ExceptionModuleHelper.isBothMode(order.getProcessType())) {
             checkCapaPhaseGate(order, ctx.currentStep, ctx.nextStep);
         }
 
@@ -444,8 +445,8 @@ public class EightDServiceImpl implements EightDService {
             log.info("8D 末阶段 {} 审批通过，待闭环：exceptionId={}, approver={}", dto.getStage(), exceptionId, operator);
         } else {
             String nextStep = ExceptionConstants.EIGHT_D_STEP_ORDER.get(idx + 1);
-            // 含 8D 流程（8D / BOTH）CAPA-8D 交错推进门禁
-            if (ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+            // CAPA-8D 交错推进门禁（仅 BOTH 模式专用；纯 8D 不进 CAPA 门禁）
+            if (ExceptionModuleHelper.isBothMode(order.getProcessType())) {
                 checkCapaPhaseGate(order, dto.getStage(), nextStep);
             }
             Exception8d upd = new Exception8d();
@@ -680,17 +681,12 @@ public class EightDServiceImpl implements EightDService {
             }
             List<Long> userIds = notificationConfigService.listUserIdsByRoleCodes(roleCodes, order.getPlantCode());
             for (Long uid : userIds) {
-                NotificationCreateDTO n = new NotificationCreateDTO();
-                n.setUserId(uid);
+                NotificationCreateDTO n = NotificationTemplateHelper.for8DTeamPendingReview(
+                        uid, order.getPlantCode(), order,
+                        "负责人 " + submitter.getRealName() + " 已提交异常单 "
+                                + order.getExceptionNo() + " 的 D1 团队，请审核。",
+                        submitter.getRealName());
                 n.setType(scenarioCode);
-                n.setLevel("提醒");
-                n.setTitle("D1 团队待审核：" + order.getExceptionNo());
-                n.setContent("负责人 " + submitter.getRealName() + " 已提交异常单 "
-                        + order.getExceptionNo() + " 的 D1 团队，请审核。");
-                n.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-                n.setBusinessId(exceptionId);
-                n.setPlantCode(order.getPlantCode());
-                n.setCreatedBy(submitter.getRealName());
                 notificationService.createNotification(n);
             }
         } catch (Exception e) {
@@ -719,16 +715,8 @@ public class EightDServiceImpl implements EightDService {
                 }
             }
             for (Long uid : userIds) {
-                NotificationCreateDTO n = new NotificationCreateDTO();
-                n.setUserId(uid);
-                n.setType(NotificationTypeEnum.EIGHT_D_TEAM_APPROVED.getCode());
-                n.setLevel("提醒");
-                n.setTitle("D1 团队审核通过：" + order.getExceptionNo());
-                n.setContent("异常单 " + order.getExceptionNo() + " 的 D1 团队已通过审核，请进入 D2 阶段。");
-                n.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-                n.setBusinessId(exceptionId);
-                n.setPlantCode(order.getPlantCode());
-                n.setCreatedBy(ExceptionModuleHelper.currentOperator());
+                NotificationCreateDTO n = NotificationTemplateHelper.for8DTeamApproved(
+                        uid, order.getPlantCode(), order, ExceptionModuleHelper.currentOperator());
                 notificationService.createNotification(n);
             }
         } catch (Exception e) {
@@ -742,16 +730,9 @@ public class EightDServiceImpl implements EightDService {
     private void notifyD1TeamRejected(Long exceptionId, ExceptionOrder order, Exception8d record, String reason) {
         try {
             if (order.getOwnerId() == null) return;
-            NotificationCreateDTO n = new NotificationCreateDTO();
-            n.setUserId(order.getOwnerId());
-            n.setType("EIGHT_D_TEAM_REJECTED");
-            n.setLevel("提醒");
-            n.setTitle("D1 团队审核未通过：" + order.getExceptionNo());
+            NotificationCreateDTO n = NotificationTemplateHelper.for8DTeamRejected(
+                    order.getOwnerId(), order.getPlantCode(), order, ExceptionModuleHelper.currentOperator());
             n.setContent("异常单 " + order.getExceptionNo() + " 的 D1 团队未通过审核，原因：" + reason + "，请重新组建团队。");
-            n.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-            n.setBusinessId(exceptionId);
-            n.setPlantCode(order.getPlantCode());
-            n.setCreatedBy(ExceptionModuleHelper.currentOperator());
             notificationService.createNotification(n);
         } catch (Exception e) {
             log.warn("发送 D1 团队驳回通知失败：exceptionId={}", exceptionId, e);
@@ -759,25 +740,42 @@ public class EightDServiceImpl implements EightDService {
     }
 
     /**
-     * CAPA-8D 交错推进门禁：8D 提交到关键步骤时发送通知，由 approveCapaPhase 负责推进 CAPA 相位。
-     * D4→D5 提交时发送 EIGHT_D_D4_SUBMITTED 通知（不推进相位，待人工审批），
-     * D5→D6 提交时发送 EIGHT_D_D5_SUBMITTED 通知（不推进相位，待人工审批）。
+     * CAPA-8D 交错推进门禁：8D 提交到关键步骤前，强制校验 CAPA 相位是否已通过对应审批，
+     * 未通过则拒绝推进（抛 BusinessException）。校验通过后再发送待审批通知。
+     * <p>门禁规则（BOTH 模式）：</p>
+     * <ul>
+     *   <li>D4→D5：必须已通过 CAPA 根因审批（相位 = ROOT_CAUSE_APPROVED）</li>
+     *   <li>D5→D6：必须已通过 CAPA 措施审批（相位 = MEASURES_APPROVED）</li>
+     * </ul>
      */
     private void checkCapaPhaseGate(ExceptionOrder order, String currentStep, String nextStep) {
-        if (ExceptionConstants.D0.equals(currentStep) && ExceptionConstants.D1.equals(nextStep)) {
-            return;
-        }
-        // D4→D5：发送通知，不自动推进 CAPA 相位（由 approveCapaRootCause 负责推进）
-        if (ExceptionConstants.D4.equals(currentStep) && ExceptionConstants.D5.equals(nextStep)) {
-            notifyByConfig(order, NotificationTypeEnum.EIGHT_D_D4_SUBMITTED.getCode(),
-                    "D4 根因分析已提交",
-                    "异常单【" + order.getExceptionNo() + "】D4 根因分析已提交，待 CAPA 根因审批。");
-        }
-        // D5→D6：发送通知，不自动推进 CAPA 相位（由 approveCapaMeasures 负责推进）
-        if (ExceptionConstants.D5.equals(currentStep) && ExceptionConstants.D6.equals(nextStep)) {
-            notifyByConfig(order, NotificationTypeEnum.EIGHT_D_D5_SUBMITTED.getCode(),
-                    "D5 措施方案已提交",
-                    "异常单【" + order.getExceptionNo() + "】D5 措施方案已提交，待 CAPA 措施审批。");
+        if (ExceptionModuleHelper.isBothMode(order.getProcessType())) {
+            // BOTH 模式：D4→D5 前置闸门，需 CAPA 根因审批通过
+            if (ExceptionConstants.D4.equals(currentStep) && ExceptionConstants.D5.equals(nextStep)) {
+                if (!ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED.equals(order.getCapaPhase())) {
+                    log.warn("8D 推进被 CAPA 根因审批门禁拦截：exceptionId={}, currentStep={}, capaPhase={}",
+                            order.getId(), currentStep, order.getCapaPhase());
+                    throw new BusinessException(ResultCode.CAPA_PHASE_GATE_NOT_MET,
+                            "D5 措施方案制定需先通过 CAPA 根因审批。当前 CAPA 相位："
+                                    + (order.getCapaPhase() != null ? order.getCapaPhase() : "CAPA 立项"));
+                }
+                notifyByConfig(order, NotificationTypeEnum.EIGHT_D_D4_SUBMITTED.getCode(),
+                        "D4 根因分析已提交",
+                        "异常单【" + order.getExceptionNo() + "】D4 根因分析已提交，待 CAPA 根因审批。");
+            }
+            // BOTH 模式：D5→D6 前置闸门，需 CAPA 措施审批通过
+            if (ExceptionConstants.D5.equals(currentStep) && ExceptionConstants.D6.equals(nextStep)) {
+                if (!ExceptionConstants.CAPA_PHASE_MEASURES_APPROVED.equals(order.getCapaPhase())) {
+                    log.warn("8D 推进被 CAPA 措施审批门禁拦截：exceptionId={}, currentStep={}, capaPhase={}",
+                            order.getId(), currentStep, order.getCapaPhase());
+                    throw new BusinessException(ResultCode.CAPA_PHASE_GATE_NOT_MET,
+                            "D6 措施实施需先通过 CAPA 措施审批。当前 CAPA 相位："
+                                    + (order.getCapaPhase() != null ? order.getCapaPhase() : "CAPA 立项"));
+                }
+                notifyByConfig(order, NotificationTypeEnum.EIGHT_D_D5_SUBMITTED.getCode(),
+                        "D5 措施方案已提交",
+                        "异常单【" + order.getExceptionNo() + "】D5 措施方案已提交，待 CAPA 措施审批。");
+            }
         }
     }
 
@@ -808,15 +806,11 @@ public class EightDServiceImpl implements EightDService {
             }
             String operator = ExceptionModuleHelper.currentOperator();
             for (Long uid : userIds) {
-                NotificationCreateDTO dto = new NotificationCreateDTO();
-                dto.setUserId(uid);
+                NotificationCreateDTO dto = NotificationTemplateHelper.forExceptionStatusChanged(
+                        uid, order.getPlantCode(), order, "配置通知", operator);
                 dto.setType(scenarioCode);
                 dto.setTitle(title);
                 dto.setContent(content);
-                dto.setBusinessType(BUSINESS_TYPE_EXCEPTION);
-                dto.setBusinessId(order.getId());
-                dto.setPlantCode(order.getPlantCode());
-                dto.setCreatedBy(operator);
                 notificationService.createNotification(dto);
             }
         } catch (Exception e) {

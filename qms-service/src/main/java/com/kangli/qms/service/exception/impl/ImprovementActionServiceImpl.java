@@ -14,6 +14,7 @@ import com.kangli.qms.service.notification.NotificationConfigService;
 import com.kangli.qms.service.notification.NotificationService;
 import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
 import com.kangli.qms.service.notification.enums.NotificationTypeEnum;
+import com.kangli.qms.service.notification.helper.NotificationTemplateHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -90,22 +91,15 @@ public class ImprovementActionServiceImpl extends ServiceImpl<ImprovementActionM
 
             String scenarioCode = NotificationTypeEnum.ACTION_OWNER_ASSIGNED.getCode();
             String level = "提醒";
-            String title = "改善措施指派：" + exceptionNo;
-            String content = "您被指定为改善措施责任人（类型：" + action.getActionType()
-                    + "；内容：" + action.getContent()
-                    + "；截止日期：" + action.getDueDate() + "），请及时完成。";
 
             // 1. 点对点通知被指派人
-            NotificationCreateDTO n = new NotificationCreateDTO();
-            n.setUserId(ownerId);
+            NotificationCreateDTO n = NotificationTemplateHelper.forImprovementAction(
+                    ownerId, action.getPlantCode(), exceptionNo, action.getExceptionId(),
+                    action.getActionType(), action.getContent(),
+                    action.getDueDate() != null ? action.getDueDate().toString() : "",
+                    loginUser.getRealName());
             n.setType(scenarioCode);
             n.setLevel(level);
-            n.setTitle(title);
-            n.setContent(content);
-            n.setBusinessType("EXCEPTION_ORDER");
-            n.setBusinessId(action.getExceptionId());
-            n.setPlantCode(action.getPlantCode());
-            n.setCreatedBy(loginUser.getRealName());
             notificationService.createNotification(n);
 
             // 2. 按配置抄送额外角色
@@ -116,16 +110,7 @@ public class ImprovementActionServiceImpl extends ServiceImpl<ImprovementActionM
                     if (ccUserId.equals(ownerId)) {
                         continue;
                     }
-                    NotificationCreateDTO cc = new NotificationCreateDTO();
-                    cc.setUserId(ccUserId);
-                    cc.setType(scenarioCode);
-                    cc.setLevel(level);
-                    cc.setTitle("【抄送】" + title);
-                    cc.setContent(content + "（通知对象：" + ownerName + "）");
-                    cc.setBusinessType("EXCEPTION_ORDER");
-                    cc.setBusinessId(action.getExceptionId());
-                    cc.setPlantCode(action.getPlantCode());
-                    cc.setCreatedBy(loginUser.getRealName());
+                    NotificationCreateDTO cc = NotificationTemplateHelper.forCc(n, ccUserId, ownerName);
                     notificationService.createNotification(cc);
                 }
             }

@@ -8,9 +8,11 @@ import com.kangli.qms.service.exception.dto.ExceptionApprovalConfigDTO;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
+import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.validation.Valid;
 import java.util.List;
 
@@ -41,15 +43,31 @@ public class ApprovalConfigController {
 
     @PostMapping
     @ApiOperation(value = "保存/更新一条阶段审批配置")
-    public R<Void> save(@Valid @RequestBody ExceptionApprovalConfigDTO dto) {
-        approvalConfigService.saveOrUpdateConfig(dto);
+    public R<Void> save(@Valid @RequestBody ExceptionApprovalConfigDTO dto, HttpServletRequest request) {
+        approvalConfigService.saveOrUpdateConfig(dto, clientIp(request));
         return R.ok();
     }
 
     @DeleteMapping("/{id}")
     @ApiOperation(value = "删除一条阶段审批配置")
-    public R<Void> delete(@ApiParam(value = "配置主键", required = true) @PathVariable Long id) {
-        approvalConfigService.deleteConfig(id);
+    public R<Void> delete(@ApiParam(value = "配置主键", required = true) @PathVariable Long id, HttpServletRequest request) {
+        approvalConfigService.deleteConfig(id, clientIp(request));
         return R.ok();
+    }
+
+    /**
+     * 获取客户端真实 IP（穿透反向代理）。
+     */
+    private String clientIp(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (StringUtils.hasText(ip) && !"unknown".equalsIgnoreCase(ip)) {
+            int idx = ip.indexOf(',');
+            return (idx > 0 ? ip.substring(0, idx) : ip).trim();
+        }
+        ip = request.getHeader("X-Real-IP");
+        if (StringUtils.hasText(ip) && !"unknown".equalsIgnoreCase(ip)) {
+            return ip.trim();
+        }
+        return request.getRemoteAddr();
     }
 }
