@@ -1,0 +1,28 @@
+# 集成测试配置：独立测试库 qms_test + Redis db1，避免污染开发库
+server:
+  port: 0
+
+spring:
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/qms_test?currentSchema=qms
+    username: postgres
+    password: "123"
+  flyway:
+    locations: classpath:db/migration
+    schemas: qms
+    default-schema: qms
+    create-schemas: true
+    baseline-on-migrate: true
+    baseline-version: 20260727161504202
+    clean-disabled: false
+  redis:
+    host: 127.0.0.1
+    port: 6379
+    database: 1
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+
+logging:
+  level:
+    com.kangli.qms: warn
