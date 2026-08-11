@@ -1,7 +1,0 @@
-feat(incoming): 供应商趋势与排名支持自定义日期范围
-
-- MaterialInspectionController: key-supplier-trend/supplier-rank 新增 startDate/endDate 可选参数
-- Mapper/XML: selectKeySuppliers/selectKeySupplierTrend/selectSupplierRank 支持动态日期窗口
-- Service 层透传日期参数，默认由前端显式传入
-- qms-bootstrap/pom.xml: 新增 flyway-maven-plugin 配置，支持 mvn flyway:repair
-- run-backend.cmd/build-backend.cmd: 路径修正与 flyway:repair 步骤
