@@ -2,6 +2,8 @@ package com.kangli.qms.api.notification;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kangli.qms.common.*;
 import com.kangli.qms.service.notification.dto.NotificationCreateDTO;
 import com.kangli.qms.domain.notification.entity.Notification;
@@ -12,15 +14,15 @@ import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import javax.validation.Valid;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -34,6 +36,7 @@ import java.util.stream.Collectors;
 public class NotificationController {
 
     private final NotificationService notificationService;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public NotificationController(NotificationService notificationService) {
         this.notificationService = notificationService;
@@ -46,7 +49,13 @@ public class NotificationController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) Integer isRead,
             @RequestParam(required = false) String businessType,
-            @RequestParam(required = false) Long businessId) {
+            @RequestParam(required = false) Long businessId,
+            @ApiParam("开始日期（yyyy-MM-dd）")
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startTime,
+            @ApiParam("结束日期（yyyy-MM-dd）")
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endTime,
+            @ApiParam("通知等级：严重/警告/提醒")
+            @RequestParam(required = false) String level) {
         LoginUser loginUser = getCurrentLoginUser();
         Page<Notification> pageObj = new Page<>(page, size);
         LambdaQueryWrapper<Notification> wrapper = new LambdaQueryWrapper<>();
@@ -60,12 +69,31 @@ public class NotificationController {
         if (businessId != null) {
             wrapper.eq(Notification::getBusinessId, businessId);
         }
+        if (StringUtils.hasText(level)) {
+            wrapper.eq(Notification::getLevel, level);
+        }
+        if (startTime != null) {
+            wrapper.ge(Notification::getCreatedAt, startTime.atStartOfDay());
+        }
+        if (endTime != null) {
+            wrapper.le(Notification::getCreatedAt, endTime.plusDays(1).atStartOfDay());
+        }
         wrapper.orderByDesc(Notification::getCreatedAt);
 
         Page<Notification> result = notificationService.page(pageObj, wrapper);
         List<NotificationVO> voList = result.getRecords().stream().map(n -> {
             NotificationVO vo = new NotificationVO();
             BeanUtils.copyProperties(n, vo);
+            // 解析 extraData JSON 为 Map
+            if (StringUtils.hasText(n.getExtraData())) {
+                try {
+                    Map<String, Object> map = MAPPER.readValue(n.getExtraData(),
+                            new TypeReference<Map<String, Object>>() {});
+                    vo.setExtraDataMap(map);
+                } catch (Exception e) {
+                    log.debug("解析 extraData 失败：notificationId={}", n.getId(), e);
+                }
+            }
             return vo;
         }).collect(Collectors.toList());
 
@@ -73,7 +101,7 @@ public class NotificationController {
     }
 
     @GetMapping("/unread-count")
-    @ApiOperation(value = "未读通知数")
+    @ApiOperation(value = "未读通知数（含按类型分组）")
     public R<Map<String, Object>> unreadCount() {
         LoginUser loginUser = getCurrentLoginUser();
         LambdaQueryWrapper<Notification> wrapper = new LambdaQueryWrapper<>();
@@ -81,10 +109,17 @@ public class NotificationController {
                 .eq(Notification::getIsRead, (short) 0);
         long total = notificationService.count(wrapper);
 
-        Map<String, Object> result = new HashMap<>();
+        // 按类型分组统计未读数
+        List<Notification> unreadList = notificationService.list(wrapper);
+        Map<String, Long> byType = unreadList.stream()
+                .collect(Collectors.groupingBy(
+                        n -> n.getBusinessType() != null ? n.getBusinessType() : "OTHER",
+                        LinkedHashMap::new,
+                        Collectors.counting()));
+
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("total", total);
-        // 简化 byType：这里仅返回 total，如需按类型分组可后续扩展
-        result.put("byType", new java.util.ArrayList<>());
+        result.put("byType", byType);
         return R.ok(result);
     }
 

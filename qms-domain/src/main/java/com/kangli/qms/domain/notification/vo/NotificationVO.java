@@ -18,4 +18,7 @@ public class NotificationVO extends Notification {
 
     @ApiModelProperty(value = "接收人姓名")
     private String userName;
+
+    @ApiModelProperty(value = "扩展数据（已解析为 Map）")
+    private java.util.Map<String, Object> extraDataMap;
 }

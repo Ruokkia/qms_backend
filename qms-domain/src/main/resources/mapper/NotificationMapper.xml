@@ -20,4 +20,13 @@
           AND is_deleted = 0
     </select>
 
+    <!-- 批量逻辑删除过期的已读通知（清理 window 天数前的已读通知） -->
+    <update id="batchDeleteReadExpired">
+        UPDATE qms.notification
+        SET is_deleted = 1, updated_at = now()
+        WHERE is_read = 1
+          AND is_deleted = 0
+          AND created_at &lt; #{cutoff}
+    </update>
+
 </mapper>

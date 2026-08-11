@@ -20,5 +20,13 @@ public interface NotificationService extends IService<Notification> {
      * 将当前用户的全部未读通知标记为已读。
      */
     void markAllRead(Long userId, LocalDateTime readAt);
+
+    /**
+     * 清理指定天数前的已读通知（逻辑删除）。
+     *
+     * @param retentionDays 保留天数
+     * @return 清理条数
+     */
+    int cleanupExpiredRead(int retentionDays);
 }
 

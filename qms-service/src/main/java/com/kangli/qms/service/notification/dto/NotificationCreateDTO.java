@@ -7,6 +7,7 @@ import lombok.Data;
 import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.NotNull;
 import java.io.Serializable;
+import java.time.LocalDateTime;
 
 /**
  * 内部创建通知 DTO（后端调用，不暴露给前端 Swagger）。
@@ -44,6 +45,12 @@ public class NotificationCreateDTO implements Serializable {
 
     @ApiModelProperty(value = "分公司编码")
     private String plantCode;
+
+    @ApiModelProperty(value = "扩展数据（JSON 字符串，存储跳转参数和摘要信息）")
+    private String extraData;
+
+    @ApiModelProperty(value = "通知过期时间")
+    private LocalDateTime expireAt;
 
     @ApiModelProperty(value = "创建人")
     private String createdBy;

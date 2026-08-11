@@ -1,10 +1,12 @@
 package com.kangli.qms.domain.notification.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
+import com.kangli.qms.domain.notification.handler.JsonbTypeHandler;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -49,6 +51,13 @@ public class Notification implements Serializable {
 
     /** 读取时间 */
     private LocalDateTime readAt;
+
+    /** 扩展数据（JSONB）：存储跳转参数和摘要信息（异常单号、供应商、严重等级等） */
+    @TableField(typeHandler = JsonbTypeHandler.class)
+    private String extraData;
+
+    /** 通知过期时间（NULL 表示永不过期） */
+    private LocalDateTime expireAt;
 
     // ---- 系统扩展列 ----
     private String plantCode;
