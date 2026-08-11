@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 
 /**
  * M1-3 关键物料绑定 Service 实现。
- * <p>补全自然键 (workOrderNo, productBarcode, materialBarcode, processCode) 唯一性校验，
+ * <p>补全自然键 (plantCode, workOrderNo, productBarcode, materialBarcode) 唯一性校验，
  * materialBarcode 为空时回退 materialCode 判定；统一返回响应 DTO（红线 #2）。</p>
  */
 @Slf4j
@@ -95,9 +95,9 @@ public class CriticalMaterialBindingServiceImpl
 
     // ===== 自然键唯一性校验 =====
     /**
-     * 自然键 (workOrderNo, productBarcode, materialBarcode, processCode) 唯一性校验。
-     * <p>看板绑定场景（成品数据看板选中子项绑定）只提供条码，工单号/工序代码可为空，
-     * 因此仅强制 产品SN + 物料条码/代码 必填；工单号、工序代码有值则等值匹配，
+     * 自然键 (plantCode, workOrderNo, productBarcode, materialBarcode) 唯一性校验。
+     * <p>看板绑定场景（成品数据看板选中子项绑定）只提供条码，工单号可为空，
+     * 因此仅强制 产品SN + 物料条码/代码 必填；工单号有值则等值匹配，
      * 无值则匹配 IS NULL，保持自然键语义完整。</p>
      */
     private void assertNaturalKeyUnique(CriticalMaterialBinding record, Long excludeId) {
@@ -111,6 +111,7 @@ public class CriticalMaterialBindingServiceImpl
         }
 
         LambdaQueryWrapper<CriticalMaterialBinding> w = new LambdaQueryWrapper<>();
+        w.eq(CriticalMaterialBinding::getPlantCode, record.getPlantCode());
         w.eq(CriticalMaterialBinding::getProductBarcode, record.getProductBarcode());
         w.eq(CriticalMaterialBinding::getIsDeleted, 0);
         // 工单号可选：有值等值匹配，无值匹配 IS NULL
@@ -118,12 +119,6 @@ public class CriticalMaterialBindingServiceImpl
             w.eq(CriticalMaterialBinding::getWorkOrderNo, record.getWorkOrderNo());
         } else {
             w.isNull(CriticalMaterialBinding::getWorkOrderNo);
-        }
-        // 工序代码可选：有值等值匹配，无值匹配 IS NULL
-        if (StringUtils.hasText(record.getProcessCode())) {
-            w.eq(CriticalMaterialBinding::getProcessCode, record.getProcessCode());
-        } else {
-            w.isNull(CriticalMaterialBinding::getProcessCode);
         }
         if (StringUtils.hasText(record.getMaterialBarcode())) {
             w.eq(CriticalMaterialBinding::getMaterialBarcode, record.getMaterialBarcode());

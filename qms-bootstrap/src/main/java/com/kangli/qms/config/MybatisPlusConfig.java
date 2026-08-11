@@ -4,8 +4,13 @@ import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.kangli.qms.domain.fai.handler.JsonbTypeHandler;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.event.EventListener;
 
 /**
  * MyBatis-Plus 配置。
@@ -13,6 +18,17 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 public class MybatisPlusConfig {
+
+    /**
+     * 全局注册 PostgreSQL jsonb 类型处理器，替代默认的 JacksonTypeHandler（后者用 setString 导致 PG 报类型不匹配）。
+     * 使用 {@link ApplicationReadyEvent} 监听器在 Spring 容器初始化完成后注册，避免循环依赖。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void registerJsonbTypeHandler(ApplicationReadyEvent event) {
+        SqlSessionFactory sqlSessionFactory = event.getApplicationContext().getBean(SqlSessionFactory.class);
+        sqlSessionFactory.getConfiguration().getTypeHandlerRegistry()
+                .register(JsonNode.class, new JsonbTypeHandler());
+    }
 
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {

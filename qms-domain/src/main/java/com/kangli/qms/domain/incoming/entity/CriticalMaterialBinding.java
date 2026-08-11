@@ -41,9 +41,6 @@ public class CriticalMaterialBinding implements Serializable {
     private String specModel;
     private String scanner;
     private LocalDateTime scanTime;
-    private String processCode;
-    /** 工序名称（仅限：装配/焊接/检测） */
-    private String processName;
     /** 是否生效：是/否 */
     private String isActive;
     private String deactivateOperator;

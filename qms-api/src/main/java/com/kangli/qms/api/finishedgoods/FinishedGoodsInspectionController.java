@@ -38,6 +38,7 @@ public class FinishedGoodsInspectionController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String inspectionResult,
+            @RequestParam(required = false) String inspectionResultLike,
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String qcReview,
             @RequestParam(required = false) String mgrApproval,
@@ -54,8 +55,14 @@ public class FinishedGoodsInspectionController {
                     .or().like(FinishedGoodsInspection::getMaterialCode, keyword)
                     .or().like(FinishedGoodsInspection::getProdBatchOrSn, keyword));
         }
-        if (StringUtils.hasText(inspectionResult)) {
-            wrapper.eq(FinishedGoodsInspection::getInspectionResult, inspectionResult);
+        if (StringUtils.hasText(inspectionResultLike)) {
+            wrapper.like(FinishedGoodsInspection::getInspectionResult, inspectionResultLike);
+        } else if (StringUtils.hasText(inspectionResult)) {
+            if ("__OTHER__".equals(inspectionResult)) {
+                wrapper.notIn(FinishedGoodsInspection::getInspectionResult, "合格", "不合格");
+            } else {
+                wrapper.eq(FinishedGoodsInspection::getInspectionResult, inspectionResult);
+            }
         }
         if (StringUtils.hasText(category)) {
             wrapper.eq(FinishedGoodsInspection::getCategory, category);

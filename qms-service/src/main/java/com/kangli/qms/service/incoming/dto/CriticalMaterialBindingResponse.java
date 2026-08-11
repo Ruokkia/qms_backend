@@ -42,10 +42,6 @@ public class CriticalMaterialBindingResponse {
     private String scanner;
     @ApiModelProperty("扫描时间")
     private LocalDateTime scanTime;
-    @ApiModelProperty("工序代码")
-    private String processCode;
-    @ApiModelProperty("工序名称：装配/焊接/检测")
-    private String processName;
     @ApiModelProperty("是否生效：是/否")
     private String isActive;
     @ApiModelProperty("失效操作人")

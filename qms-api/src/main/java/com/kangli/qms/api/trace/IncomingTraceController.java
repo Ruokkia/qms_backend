@@ -69,7 +69,8 @@ public class IncomingTraceController {
     public R<List<Map<String, Object>>> searchByBarcode(
             @RequestParam String itemType,
             @RequestParam String keyword,
-            @RequestParam(defaultValue = "20") int limit) {
-        return R.ok(service.searchByBarcode(itemType, keyword, limit));
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(required = false) String itemCode) {
+        return R.ok(service.searchByBarcode(itemType, keyword, limit, itemCode));
     }
 }

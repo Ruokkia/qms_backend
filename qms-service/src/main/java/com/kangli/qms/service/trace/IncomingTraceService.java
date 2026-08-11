@@ -204,10 +204,11 @@ public class IncomingTraceService {
         String currentPlant = plant();
         List<Map<String, Object>> result = new ArrayList<>();
 
-        // 成品 / 半成品
+        // 成品 / 半成品（该接口仅用于前端快捷查询条码，取前 N 条即可，避免全表扫描拖慢页面加载）
         LambdaQueryWrapper<FinishedGoodsInspection> fgWrapper = new LambdaQueryWrapper<>();
         fgWrapper.eq(FinishedGoodsInspection::getPlantCode, currentPlant)
-                 .orderByAsc(FinishedGoodsInspection::getId);
+                 .orderByAsc(FinishedGoodsInspection::getId)
+                 .last("LIMIT 200");
         for (FinishedGoodsInspection fg : fgMapper.selectList(fgWrapper)) {
             result.add(buildNodeFromFg(fg));
         }
@@ -216,7 +217,8 @@ public class IncomingTraceService {
         LambdaQueryWrapper<MaterialInspection> matWrapper = new LambdaQueryWrapper<>();
         matWrapper.eq(MaterialInspection::getPlantCode, currentPlant)
                   .isNotNull(MaterialInspection::getMaterialBarcode)
-                  .orderByAsc(MaterialInspection::getId);
+                  .orderByAsc(MaterialInspection::getId)
+                  .last("LIMIT 200");
         for (MaterialInspection mat : matMapper.selectList(matWrapper)) {
             result.add(buildNodeFromMat(mat));
         }
@@ -750,7 +752,7 @@ public class IncomingTraceService {
      * @param limit    最大返回条数（默认 20）
      * @return [{barcode, itemCode, itemName, batchNo}]
      */
-    public List<Map<String, Object>> searchByBarcode(String itemType, String keyword, int limit) {
+    public List<Map<String, Object>> searchByBarcode(String itemType, String keyword, int limit, String itemCode) {
         List<Map<String, Object>> results = new ArrayList<>();
         if (!StringUtils.hasText(itemType) || !StringUtils.hasText(keyword)) {
             return results;
@@ -758,15 +760,20 @@ public class IncomingTraceService {
         String currentPlant = plant();
         final String kw = keyword.trim();
         int max = limit > 0 ? limit : 20;
+        final boolean restrictItemCode = StringUtils.hasText(itemCode);
 
         if ("PRODUCT".equalsIgnoreCase(itemType)) {
-            List<FinishedGoodsInspection> list = fgMapper.selectList(
+            LambdaQueryWrapper<FinishedGoodsInspection> qw =
                     new LambdaQueryWrapper<FinishedGoodsInspection>()
-                            .eq(FinishedGoodsInspection::getPlantCode, currentPlant)
-                            .and(w -> w.like(FinishedGoodsInspection::getProdBatchOrSn, kw)
-                                    .or().like(FinishedGoodsInspection::getMaterialCode, kw)
-                                    .or().like(FinishedGoodsInspection::getProductName, kw))
-                            .last("LIMIT " + max));
+                            .eq(FinishedGoodsInspection::getPlantCode, currentPlant);
+            if (restrictItemCode) {
+                qw.eq(FinishedGoodsInspection::getMaterialCode, itemCode);
+            }
+            qw.and(w -> w.like(FinishedGoodsInspection::getProdBatchOrSn, kw)
+                    .or().like(FinishedGoodsInspection::getMaterialCode, kw)
+                    .or().like(FinishedGoodsInspection::getProductName, kw))
+              .last("LIMIT " + max);
+            List<FinishedGoodsInspection> list = fgMapper.selectList(qw);
             for (FinishedGoodsInspection fg : list) {
                 Map<String, Object> r = new LinkedHashMap<>();
                 r.put("barcode", fg.getProdBatchOrSn());
@@ -776,13 +783,18 @@ public class IncomingTraceService {
                 results.add(r);
             }
         } else if ("MATERIAL".equalsIgnoreCase(itemType)) {
-            List<MaterialInspection> list = matMapper.selectList(
+            LambdaQueryWrapper<MaterialInspection> qw =
                     new LambdaQueryWrapper<MaterialInspection>()
-                            .eq(MaterialInspection::getPlantCode, currentPlant)
-                            .and(w -> w.like(MaterialInspection::getMaterialBarcode, kw)
-                                    .or().like(MaterialInspection::getMaterialCode, kw)
-                                    .or().like(MaterialInspection::getMaterialName, kw))
-                            .last("LIMIT " + max));
+                            .eq(MaterialInspection::getPlantCode, currentPlant);
+            if (restrictItemCode) {
+                qw.eq(MaterialInspection::getMaterialCode, itemCode);
+            }
+            qw.and(w -> w.like(MaterialInspection::getMaterialBarcode, kw)
+                    .or().like(MaterialInspection::getMaterialBatchNo, kw)
+                    .or().like(MaterialInspection::getMaterialCode, kw)
+                    .or().like(MaterialInspection::getMaterialName, kw))
+              .last("LIMIT " + max);
+            List<MaterialInspection> list = matMapper.selectList(qw);
             for (MaterialInspection mat : list) {
                 Map<String, Object> r = new LinkedHashMap<>();
                 r.put("barcode", mat.getMaterialBarcode());

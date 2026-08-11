@@ -36,6 +36,7 @@ public enum ResultCode {
     EIGHT_D_ALREADY_CLOSED(2007, "8D已闭环"),
     VERSION_CONFLICT(2008, "数据已被他人修改，请刷新后重试"),
     EIGHT_D_STEP_JUMP(2009, "8D步骤不允许跳步"),
+    CAPA_PHASE_GATE_NOT_MET(2010, "CAPA相位门禁未满足"),
     ;
 
     private final int code;

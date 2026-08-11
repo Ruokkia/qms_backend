@@ -11,6 +11,8 @@ target/
 
 # Maven output
 mvn_output.txt
+build_out.txt
+build_err.txt
 
 # IDE metadata
 .idea/
