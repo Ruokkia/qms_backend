@@ -8,9 +8,12 @@ import com.kangli.qms.domain.spc.entity.SpcControlLimit;
  */
 public interface SpcChartService {
 
-    /** 重新计算并保存控制限（子组数 < 2 时清空） */
-    SpcControlLimit recalcControlLimits(Long paramId, String plantCode);
+    /**
+     * 重新计算并保存控制限（子组数 < 2 时清空）。
+     * itemType/itemCode 非空时按该维度隔离子组并写入带维度的控制限；为空则按全局基线。
+     */
+    SpcControlLimit recalcControlLimits(Long paramId, String plantCode, String itemType, String itemCode);
 
-    /** 获取控制图数据（含控制限与子组点）；itemType/itemCode 为空时不过滤，用于按产品/物料代码关联 */
-    SpcChartDataDTO getChartData(Long paramId, String chartType, String plantCode, String itemType, String itemCode);
+    /** 获取控制图数据（含控制限与子组点）；itemType/itemCode/batchNo 为空时不过滤 */
+    SpcChartDataDTO getChartData(Long paramId, String chartType, String plantCode, String itemType, String itemCode, String batchNo);
 }

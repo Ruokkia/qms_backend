@@ -25,4 +25,10 @@ public class SpcSubgroupSaveDTO implements Serializable {
     private String itemType;
     /** 产品/物料代码（随 itemType 取值，控制图关联维度） */
     private String itemCode;
+    /** 批次号（手动录入时可填写，控制图追溯维度） */
+    private String batchNo;
+    /** 条码（追溯标识，手动录入时必填） */
+    private String barcode;
+    /** 产品/物料名称（手动录入时可填写，控制图展示维度） */
+    private String materialName;
 }

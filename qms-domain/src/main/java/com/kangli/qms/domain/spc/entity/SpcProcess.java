@@ -32,6 +32,12 @@ public class SpcProcess implements Serializable {
     /** 排序 */
     private Integer sortOrder;
 
+    /** 是否启用：是/否 */
+    private String isActive;
+
+    /** 变更备注 */
+    private String changeRemark;
+
     // ---- 系统扩展列 ----
     private String plantCode;
     private String plantName;

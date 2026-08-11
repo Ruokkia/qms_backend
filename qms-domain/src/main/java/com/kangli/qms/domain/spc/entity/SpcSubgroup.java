@@ -46,6 +46,8 @@ public class SpcSubgroup implements Serializable {
     private String workOrderNo;
     /** 来源批次号 */
     private String batchNo;
+    /** 条码（追溯标识，手动录入时必填） */
+    private String barcode;
     /** 来源物料代码（冗余兼容列：物料场景与 itemCode 同步） */
     private String materialCode;
     /** 来源物料名称 */
@@ -60,6 +62,12 @@ public class SpcSubgroup implements Serializable {
     private String paramCode;
     /** 标准单位快照 */
     private String unit;
+    /** 子组生成时所引用 SpcParameter 的目标值快照（当时标准副本，非实时主数据） */
+    private BigDecimal targetValue;
+    /** 子组生成时所引用 SpcParameter 的规格上限快照 */
+    private BigDecimal upperSpecLimit;
+    /** 子组生成时所引用 SpcParameter 的规格下限快照 */
+    private BigDecimal lowerSpecLimit;
     /** 首件标准版本快照 */
     private Integer standardVersion;
     /** 子组状态：待补样本/已完成；仅已完成可参与 SPC 统计 */

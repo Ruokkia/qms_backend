@@ -14,6 +14,7 @@ import com.kangli.qms.service.spc.dto.SpcProcessRequest;
 import com.kangli.qms.service.spc.dto.SpcProcessResponse;
 import com.kangli.qms.service.spc.dto.SpcSubgroupResponse;
 import com.kangli.qms.service.spc.dto.SpcSubgroupSaveDTO;
+import com.kangli.qms.service.spc.dto.SpcBatchNoDTO;
 import com.kangli.qms.service.spc.dto.SpcPendingSampleAppendDTO;
 import com.kangli.qms.domain.spc.entity.SpcControlLimit;
 import com.kangli.qms.service.spc.SpcCapabilityService;
@@ -28,6 +29,7 @@ import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -183,22 +185,26 @@ public class SpcController {
     @ApiOperation(value = "Xbar-R 控制图数据")
     public R<SpcChartDataDTO> xbarRChart(@ApiParam(value = "参数 id") @PathVariable Long paramId,
                                          @ApiParam(value = "分类 PRODUCT/MATERIAL，可空") @RequestParam(required = false) String itemType,
-                                         @ApiParam(value = "产品/物料代码，可空") @RequestParam(required = false) String itemCode) {
-        return R.ok(chartService.getChartData(paramId, "Xbar-R", currentUser().getPlantCode().name(), itemType, itemCode));
+                                         @ApiParam(value = "产品/物料代码，可空") @RequestParam(required = false) String itemCode,
+                                         @ApiParam(value = "批次号，可空（多批次时不填则全量返回）") @RequestParam(required = false) String batchNo) {
+        return R.ok(chartService.getChartData(paramId, "Xbar-R", currentUser().getPlantCode().name(), itemType, itemCode, batchNo));
     }
 
     @GetMapping("/charts/{paramId}/xbar-s")
     @ApiOperation(value = "Xbar-s 控制图数据")
     public R<SpcChartDataDTO> xbarSChart(@ApiParam(value = "参数 id") @PathVariable Long paramId,
                                          @ApiParam(value = "分类 PRODUCT/MATERIAL，可空") @RequestParam(required = false) String itemType,
-                                         @ApiParam(value = "产品/物料代码，可空") @RequestParam(required = false) String itemCode) {
-        return R.ok(chartService.getChartData(paramId, "Xbar-s", currentUser().getPlantCode().name(), itemType, itemCode));
+                                         @ApiParam(value = "产品/物料代码，可空") @RequestParam(required = false) String itemCode,
+                                         @ApiParam(value = "批次号，可空（多批次时不填则全量返回）") @RequestParam(required = false) String batchNo) {
+        return R.ok(chartService.getChartData(paramId, "Xbar-s", currentUser().getPlantCode().name(), itemType, itemCode, batchNo));
     }
 
     @PostMapping("/control-limits/{paramId}/recalc")
-    @ApiOperation(value = "重新计算控制限")
-    public R<SpcControlLimitResponse> recalcControlLimits(@ApiParam(value = "参数 id") @PathVariable Long paramId) {
-        SpcControlLimit cl = chartService.recalcControlLimits(paramId, currentUser().getPlantCode().name());
+    @ApiOperation(value = "重新计算控制限（按 itemType+itemCode 维度隔离，不传则按全局基线）")
+    public R<SpcControlLimitResponse> recalcControlLimits(@ApiParam(value = "参数 id") @PathVariable Long paramId,
+                                                           @ApiParam(value = "分类 PRODUCT/MATERIAL，可空") @RequestParam(required = false) String itemType,
+                                                           @ApiParam(value = "产品/物料代码，可空") @RequestParam(required = false) String itemCode) {
+        SpcControlLimit cl = chartService.recalcControlLimits(paramId, currentUser().getPlantCode().name(), itemType, itemCode);
         // 子组数不足（<2）时无法计算控制限，返回 null
         return R.ok(cl == null ? null : toControlLimitResponse(cl));
     }
@@ -212,6 +218,25 @@ public class SpcController {
         return R.ok(itemDictService.search(currentUser().getPlantCode().name(), keyword));
     }
 
+    @GetMapping("/source/batch-nos")
+    @ApiOperation(value = "录入时下拉的真实批号列表（按 itemType+itemCode 查成品表/物料表）")
+    public R<List<SpcBatchNoDTO>> listBatchNos(
+            @ApiParam(value = "分类 PRODUCT/MATERIAL") @RequestParam String itemType,
+            @ApiParam(value = "产品/物料代码") @RequestParam String itemCode) {
+        return R.ok(subgroupService.listBatchNos(itemType, itemCode, currentUser()));
+    }
+
+    @GetMapping("/source/detail")
+    @ApiOperation(value = "按 itemType+itemCode+(batchNo|条码) 反查成品表/物料表来源明细（SPC 溯源抽屉）")
+    public R<Map<String, Object>> sourceDetail(
+            @ApiParam(value = "分类 PRODUCT/MATERIAL") @RequestParam String itemType,
+            @ApiParam(value = "产品/物料代码") @RequestParam String itemCode,
+            @ApiParam(value = "批次号（与条码二选一）") @RequestParam(required = false) String batchNo,
+            @ApiParam(value = "条码/追溯标识（与批次号二选一）") @RequestParam(required = false) String barcode,
+            @ApiParam(value = "子组自身厂区编码（溯源按数据归属厂区反查）") @RequestParam(required = false) String plantCode) {
+        return R.ok(subgroupService.sourceDetail(itemType, itemCode, batchNo, barcode, plantCode));
+    }
+
     private SpcControlLimitResponse toControlLimitResponse(SpcControlLimit cl) {
         SpcControlLimitResponse resp = new SpcControlLimitResponse();
         org.springframework.beans.BeanUtils.copyProperties(cl, resp);
@@ -221,15 +246,21 @@ public class SpcController {
     // ===== 过程能力 =====
 
     @GetMapping("/capability/{paramId}")
-    @ApiOperation(value = "最新过程能力指数")
-    public R<SpcCapabilityResultDTO> getCapability(@ApiParam(value = "参数 id") @PathVariable Long paramId) {
-        return R.ok(capabilityService.getLatest(paramId, currentUser().getPlantCode().name()));
+    @ApiOperation(value = "最新过程能力指数（附带 FAI 标准层规格限）")
+    public R<SpcCapabilityResultDTO> getCapability(@ApiParam(value = "参数 id") @PathVariable Long paramId,
+                                                    @ApiParam(value = "分类 PRODUCT/MATERIAL，可空") @RequestParam(required = false) String itemType,
+                                                    @ApiParam(value = "产品/物料代码，可空") @RequestParam(required = false) String itemCode,
+                                                    @ApiParam(value = "批次号，可空") @RequestParam(required = false) String batchNo) {
+        return R.ok(capabilityService.getLatest(paramId, currentUser().getPlantCode().name(), itemType, itemCode, batchNo));
     }
 
     @PostMapping("/capability/{paramId}/recalc")
-    @ApiOperation(value = "重新计算能力指数")
-    public R<SpcCapabilityResultDTO> recalcCapability(@ApiParam(value = "参数 id") @PathVariable Long paramId) {
-        return R.ok(capabilityService.recalcCapability(paramId, currentUser().getPlantCode().name()));
+    @ApiOperation(value = "重新计算能力指数（附带 FAI 标准层规格限）")
+    public R<SpcCapabilityResultDTO> recalcCapability(@ApiParam(value = "参数 id") @PathVariable Long paramId,
+                                                       @ApiParam(value = "分类 PRODUCT/MATERIAL，必填才能从 FAI 标准解析规格限") @RequestParam(required = false) String itemType,
+                                                       @ApiParam(value = "产品/物料代码，必填才能从 FAI 标准解析规格限") @RequestParam(required = false) String itemCode,
+                                                       @ApiParam(value = "批次号，可空") @RequestParam(required = false) String batchNo) {
+        return R.ok(capabilityService.recalcCapability(paramId, currentUser().getPlantCode().name(), itemType, itemCode, batchNo));
     }
 
     private LoginUser currentUser() {

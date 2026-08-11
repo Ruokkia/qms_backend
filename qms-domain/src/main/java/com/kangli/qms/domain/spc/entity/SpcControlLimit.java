@@ -54,6 +54,12 @@ public class SpcControlLimit implements Serializable {
     // ---- 系统扩展列 ----
     private String plantCode;
     private String plantName;
+
+    /** 关联维度：PRODUCT/MATERIAL，为空表示全局基线 */
+    private String itemType;
+    /** 关联产品/物料代码，为空表示全局基线 */
+    private String itemCode;
+
     private String createdBy;
     private String updatedBy;
 

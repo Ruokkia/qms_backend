@@ -1,11 +1,13 @@
 package com.kangli.qms.service.spc;
 
 import com.kangli.qms.common.LoginUser;
+import com.kangli.qms.service.spc.dto.SpcBatchNoDTO;
 import com.kangli.qms.service.spc.dto.SpcSubgroupResponse;
 import com.kangli.qms.service.spc.dto.SpcSubgroupSaveDTO;
 import com.kangli.qms.service.spc.dto.SpcPendingSampleAppendDTO;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * M4 SPC 子组（数据采集）Service。
@@ -35,5 +37,28 @@ public interface SpcSubgroupService {
 
     /** 删除子组及明细（逻辑删除） */
     void remove(Long id);
+
+    /**
+     * 录入时按 itemType + itemCode 返回两表中该代码下的真实批次号列表（去重）。
+     * PRODUCT 查 finished_goods_inspection.prod_batch_or_sn；MATERIAL 查 material_inspection.material_batch_no。
+     *
+     * @param itemType PRODUCT / MATERIAL
+     * @param itemCode 产品/物料代码
+     * @param loginUser 当前登录用户（取厂区做隔离）
+     */
+    List<SpcBatchNoDTO> listBatchNos(String itemType, String itemCode, LoginUser loginUser);
+
+    /**
+     * 按 itemType + itemCode + batchNo 反查两表，返回该批次在来源表（成品/物料）中的明细行。
+     * 用于 SPC 溯源抽屉展示真实来源数据。
+     *
+     * @param itemType PRODUCT / MATERIAL
+     * @param itemCode 产品/物料代码
+     * @param batchNo  批次号
+     * @param barcode   条码（追溯标识），可空；与 batchNo 二选一即可命中来源（OR 关系）
+     * @param loginUser 当前登录用户（取厂区做隔离）
+     * @return 来源行明细（字段随表不同），未找到返回 null
+     */
+    Map<String, Object> sourceDetail(String itemType, String itemCode, String batchNo, String barcode, String plantCode);
 
 }

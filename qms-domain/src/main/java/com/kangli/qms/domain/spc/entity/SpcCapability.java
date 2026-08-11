@@ -49,6 +49,12 @@ public class SpcCapability implements Serializable {
     /** 统计结束时间 */
     private LocalDateTime endTime;
 
+    // ---- 维度隔离列 ----
+    /** 关联维度：PRODUCT/MATERIAL，为空表示全局基线 */
+    private String itemType;
+    /** 关联产品/物料代码，为空表示全局基线 */
+    private String itemCode;
+
     // ---- 系统扩展列 ----
     private String plantCode;
     private String plantName;

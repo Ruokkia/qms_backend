@@ -3,7 +3,6 @@ package com.kangli.qms.service.spc.dto;
 import lombok.Data;
 
 import java.io.Serializable;
-import java.math.BigDecimal;
 
 /**
  * SPC 关键参数创建/更新请求。
@@ -23,18 +22,14 @@ public class SpcParameterRequest implements Serializable {
     private String paramType;
     /** 单位 */
     private String unit;
-    /** 规格上限 USL */
-    private BigDecimal upperSpecLimit;
-    /** 规格下限 LSL */
-    private BigDecimal lowerSpecLimit;
-    /** 目标值 */
-    private BigDecimal targetValue;
-    /** 子组大小 n（2~10） */
-    private Integer subgroupSize;
-    /** 控制图类型：Xbar-R / Xbar-s */
-    private String chartType;
     /** 是否启用：是/否 */
     private String isActive;
+    /** 小数位数 */
+    private Integer decimalPlaces;
+    /** 是否关键特性：是/否 */
+    private String isCritical;
+    /** 变更备注 */
+    private String changeRemark;
     /** 乐观锁版本（更新时必填） */
     private Integer version;
 }

@@ -76,8 +76,6 @@ public class SpcParameterServiceImpl implements SpcParameterService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public SpcParameterResponse create(SpcParameterRequest request, LoginUser loginUser) {
-        // 改进①：规格三值逻辑校验
-        validateSpecLimits(request.getUpperSpecLimit(), request.getLowerSpecLimit(), request.getTargetValue());
         // 改进③：同工序下参数编码唯一性校验
         validateParamCodeUnique(request.getProcessId(), request.getParamCode(), null, loginUser.getPlantCode().name());
 
@@ -87,14 +85,12 @@ public class SpcParameterServiceImpl implements SpcParameterService {
         e.setParamName(request.getParamName());
         e.setParamType(request.getParamType());
         e.setUnit(request.getUnit());
-        e.setUpperSpecLimit(request.getUpperSpecLimit());
-        e.setLowerSpecLimit(request.getLowerSpecLimit());
-        e.setTargetValue(request.getTargetValue());
-        Integer subgroupSize = request.getSubgroupSize() == null ? 5 : request.getSubgroupSize();
-        validateSubgroupSize(subgroupSize);
-        e.setSubgroupSize(subgroupSize);
-        e.setChartType(request.getChartType() == null ? "Xbar-R" : request.getChartType());
         e.setIsActive(request.getIsActive() == null ? "是" : request.getIsActive());
+        e.setDecimalPlaces(request.getDecimalPlaces() == null ? 3 : request.getDecimalPlaces());
+        e.setIsCritical(request.getIsCritical() == null ? "否" : request.getIsCritical());
+        e.setChangeRemark(request.getChangeRemark());
+        // 规格上限/下限/目标值/子组大小 n/控制图类型 均不在字典层填写；
+        // 保留 spc_parameter 表已有列不变，留待【物料‑工序‑参数】标准层单独配置。
         e.setPlantCode(loginUser.getPlantCode().name());
         e.setPlantName(loginUser.getPlantCode().getChineseName());
         e.setCreatedBy(loginUser.getAccount());
@@ -113,10 +109,6 @@ public class SpcParameterServiceImpl implements SpcParameterService {
         if (request.getVersion() != null && !request.getVersion().equals(current.getVersion())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "记录已被他人修改，请刷新后重试");
         }
-        // 改进①：规格三值逻辑校验（仅当 request 传了对应字段时才校验）
-        if (request.getUpperSpecLimit() != null || request.getLowerSpecLimit() != null || request.getTargetValue() != null) {
-            validateSpecLimits(request.getUpperSpecLimit(), request.getLowerSpecLimit(), request.getTargetValue());
-        }
         // 改进③：同工序下参数编码唯一性校验
         validateParamCodeUnique(request.getProcessId(), request.getParamCode(), id, current.getPlantCode());
 
@@ -125,14 +117,11 @@ public class SpcParameterServiceImpl implements SpcParameterService {
         current.setParamName(request.getParamName());
         current.setParamType(request.getParamType());
         current.setUnit(request.getUnit());
-        current.setUpperSpecLimit(request.getUpperSpecLimit());
-        current.setLowerSpecLimit(request.getLowerSpecLimit());
-        current.setTargetValue(request.getTargetValue());
-        Integer subgroupSize = request.getSubgroupSize() == null ? current.getSubgroupSize() : request.getSubgroupSize();
-        validateSubgroupSize(subgroupSize);
-        current.setSubgroupSize(subgroupSize);
-        current.setChartType(request.getChartType() == null ? current.getChartType() : request.getChartType());
         current.setIsActive(request.getIsActive() == null ? current.getIsActive() : request.getIsActive());
+        current.setDecimalPlaces(request.getDecimalPlaces() == null ? current.getDecimalPlaces() : request.getDecimalPlaces());
+        current.setIsCritical(request.getIsCritical() == null ? current.getIsCritical() : request.getIsCritical());
+        current.setChangeRemark(request.getChangeRemark());
+        // 规格上限/下限/目标值/子组大小 n/控制图类型 不在字典层维护，不通过 Request 覆写
         // 不再手动 setVersion：@Version 拦截器会以当前版本作 WHERE 并自动 +1，避免误判导致更新 0 行
         current.setUpdatedBy(loginUser.getAccount());
         int rows = parameterMapper.updateById(current);
@@ -185,39 +174,6 @@ public class SpcParameterServiceImpl implements SpcParameterService {
     }
 
     /**
-     * 校验子组大小 n。
-     * <p>SPC 系数表 spc_coefficient 仅固化了 n=2~12 的标准系数，
-     * 超出范围会导致控制限/能力指数计算时取不到系数（c4 为 NULL 或除零）。
-     * 提前在参数创建/更新处拦截，避免脏数据进入后续计算。</p>
-     *
-     * @param n 子组大小
-     */
-    private void validateSubgroupSize(Integer n) {
-        if (n == null || n < 2 || n > 12) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "子组大小 n 必须为 2~12 的整数");
-        }
-    }
-
-    /**
-     * 改进①：校验 USL / LSL / 目标值 逻辑一致性。
-     * <p>USL 必须 > LSL，目标值必须落在 [LSL, USL] 区间内。
-     * 仅当相关字段非 null 时才执行比较。</p>
-     */
-    private void validateSpecLimits(java.math.BigDecimal usl, java.math.BigDecimal lsl, java.math.BigDecimal target) {
-        if (usl != null && lsl != null && usl.compareTo(lsl) <= 0) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "规格上限（USL）必须大于规格下限（LSL）");
-        }
-        if (target != null) {
-            if (lsl != null && target.compareTo(lsl) < 0) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "目标值不能低于规格下限（LSL）");
-            }
-            if (usl != null && target.compareTo(usl) > 0) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "目标值不能高于规格上限（USL）");
-            }
-        }
-    }
-
-    /**
      * 改进③：校验同一工序下参数编码唯一性。
      *
      * @param processId 工序ID
@@ -255,6 +211,9 @@ public class SpcParameterServiceImpl implements SpcParameterService {
         r.setSubgroupSize(e.getSubgroupSize());
         r.setChartType(e.getChartType());
         r.setIsActive(e.getIsActive());
+        r.setDecimalPlaces(e.getDecimalPlaces() != null ? e.getDecimalPlaces() : 3);
+        r.setIsCritical(e.getIsCritical());
+        r.setChangeRemark(e.getChangeRemark());
         r.setPlantCode(e.getPlantCode());
         r.setPlantName(e.getPlantName());
         return r;

@@ -19,4 +19,6 @@ public class SpcProcessResponse implements Serializable {
     private Integer sortOrder;
     private String plantCode;
     private String plantName;
+    private String isActive;
+    private String changeRemark;
 }

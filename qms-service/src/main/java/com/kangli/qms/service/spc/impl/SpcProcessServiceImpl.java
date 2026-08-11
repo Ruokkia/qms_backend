@@ -86,6 +86,8 @@ public class SpcProcessServiceImpl implements SpcProcessService {
         entity.setProcessName(request.getProcessName());
         entity.setDescription(request.getDescription());
         entity.setSortOrder(request.getSortOrder() == null ? 0 : request.getSortOrder());
+        entity.setIsActive(request.getIsActive() == null ? "是" : request.getIsActive());
+        entity.setChangeRemark(request.getChangeRemark());
         entity.setPlantCode(plantCode);
         entity.setPlantName(loginUser.getPlantCode().getChineseName());
         entity.setCreatedBy(loginUser.getAccount());
@@ -147,6 +149,8 @@ public class SpcProcessServiceImpl implements SpcProcessService {
         current.setProcessName(request.getProcessName());
         current.setDescription(request.getDescription());
         current.setSortOrder(request.getSortOrder() == null ? current.getSortOrder() : request.getSortOrder());
+        current.setIsActive(request.getIsActive() == null ? current.getIsActive() : request.getIsActive());
+        current.setChangeRemark(request.getChangeRemark());
         // 不再手动 setVersion：@Version 拦截器会以当前版本作 WHERE 并自动 +1，避免误判导致更新 0 行
         current.setUpdatedBy(loginUser.getAccount());
         int rows = processMapper.updateById(current);
@@ -219,6 +223,8 @@ public class SpcProcessServiceImpl implements SpcProcessService {
         r.setSortOrder(e.getSortOrder());
         r.setPlantCode(e.getPlantCode());
         r.setPlantName(e.getPlantName());
+        r.setIsActive(e.getIsActive());
+        r.setChangeRemark(e.getChangeRemark());
         return r;
     }
 }

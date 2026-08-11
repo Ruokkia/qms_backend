@@ -9,8 +9,14 @@ import com.kangli.qms.domain.spc.entity.SpcSubgroup;
 import com.kangli.qms.domain.spc.mapper.SpcCapabilityMapper;
 import com.kangli.qms.domain.spc.mapper.SpcCoefficientMapper;
 import com.kangli.qms.domain.spc.mapper.SpcParameterMapper;
+import com.kangli.qms.domain.spc.mapper.SpcProcessMapper;
 import com.kangli.qms.domain.spc.mapper.SpcSampleMapper;
 import com.kangli.qms.domain.spc.mapper.SpcSubgroupMapper;
+import com.kangli.qms.domain.fai.entity.FaiInspectionStandard;
+import com.kangli.qms.domain.fai.entity.FaiInspectionStandardItem;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardItemMapper;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardMapper;
+import com.kangli.qms.domain.spc.entity.SpcProcess;
 import com.kangli.qms.service.spc.dto.SpcCapabilityResultDTO;
 import com.kangli.qms.service.spc.impl.SpcCapabilityServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +48,9 @@ class SpcCapabilityServiceImplTest {
     private SpcSampleMapper sampleMapper;
     private SpcCapabilityMapper capabilityMapper;
     private SpcCoefficientMapper coefficientMapper;
+    private SpcProcessMapper processMapper;
+    private FaiInspectionStandardMapper standardMapper;
+    private FaiInspectionStandardItemMapper standardItemMapper;
     private SpcCapabilityServiceImpl service;
 
     @BeforeEach
@@ -51,8 +60,11 @@ class SpcCapabilityServiceImplTest {
         sampleMapper = mock(SpcSampleMapper.class);
         capabilityMapper = mock(SpcCapabilityMapper.class);
         coefficientMapper = mock(SpcCoefficientMapper.class);
+        processMapper = mock(SpcProcessMapper.class);
+        standardMapper = mock(FaiInspectionStandardMapper.class);
+        standardItemMapper = mock(FaiInspectionStandardItemMapper.class);
         service = new SpcCapabilityServiceImpl(subgroupMapper, parameterMapper, sampleMapper,
-                capabilityMapper, coefficientMapper);
+                capabilityMapper, coefficientMapper, processMapper, standardMapper, standardItemMapper);
     }
 
     private SpcParameter param(int n, String chartType, BigDecimal usl, BigDecimal lsl) {
@@ -62,8 +74,26 @@ class SpcCapabilityServiceImplTest {
         p.setChartType(chartType);
         p.setUpperSpecLimit(usl);
         p.setLowerSpecLimit(lsl);
+        p.setProcessId(1L);
         p.setIsDeleted((short) 0);
         return p;
+    }
+
+    /** 复用：mock 工序+FAI标准+标准项链路，resolveSpecFromStandard 解析规格限。 */
+    private void mockSpecChain(String chartType, BigDecimal usl, BigDecimal lsl) {
+        SpcProcess process = new SpcProcess();
+        process.setId(1L);
+        process.setProcessCode("装配");
+        when(processMapper.selectById(1L)).thenReturn(process);
+        FaiInspectionStandard standard = new FaiInspectionStandard();
+        standard.setId(1L);
+        when(standardMapper.selectActiveByCondition(any(), any(), any(), any())).thenReturn(standard);
+        FaiInspectionStandardItem stdItem = new FaiInspectionStandardItem();
+        stdItem.setUpperLimit(usl);
+        stdItem.setLowerLimit(lsl);
+        stdItem.setSubgroupSize(5);
+        stdItem.setChartType(chartType);
+        when(standardItemMapper.selectOne(any())).thenReturn(stdItem);
     }
 
     private List<SpcSubgroup> subgroups(int count, BigDecimal mean, BigDecimal range, BigDecimal std) {
@@ -112,8 +142,9 @@ class SpcCapabilityServiceImplTest {
         coef.setD2(new BigDecimal("2.326"));
         coef.setC4(new BigDecimal("0.94"));
         when(coefficientMapper.selectById(any())).thenReturn(coef);
+        mockSpecChain("Xbar-R", new BigDecimal("13"), new BigDecimal("7"));
 
-        SpcCapabilityResultDTO r = service.recalcCapability(1L, "SZ");
+        SpcCapabilityResultDTO r = service.recalcCapability(1L, "SZ", "PRODUCT", "MC-001", "LOT-001");
 
         assertEquals(1.1629, r.getCp().doubleValue(), 1e-4);
         assertEquals(1.1629, r.getCpk().doubleValue(), 1e-4);
@@ -138,8 +169,9 @@ class SpcCapabilityServiceImplTest {
         coef.setC4(new BigDecimal("0.94"));
         coef.setD2(new BigDecimal("2.326"));
         when(coefficientMapper.selectById(any())).thenReturn(coef);
+        mockSpecChain("Xbar-s", new BigDecimal("13"), new BigDecimal("7"));
 
-        SpcCapabilityResultDTO r = service.recalcCapability(1L, "SZ");
+        SpcCapabilityResultDTO r = service.recalcCapability(1L, "SZ", "PRODUCT", "MC-001", "LOT-001");
 
         assertEquals(1.189, r.getCp().doubleValue(), 1e-3);
         assertEquals(1.189, r.getCpk().doubleValue(), 1e-3);
@@ -154,7 +186,7 @@ class SpcCapabilityServiceImplTest {
         when(sampleMapper.selectList(any())).thenReturn(samplesAround(20, 5, new BigDecimal("10")));
         when(coefficientMapper.selectById(any())).thenReturn(null);
 
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ"));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ", null, null, null));
         assertEquals(ResultCode.INTERNAL_ERROR.getCode(), ex.getCode());
     }
 
@@ -170,7 +202,7 @@ class SpcCapabilityServiceImplTest {
         when(coefficientMapper.selectById(any())).thenReturn(coef);
 
         // D4 已修：c4=0 现被防御性校验拦截，抛 INTERNAL_ERROR 而非除零 ArithmeticException
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ"));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ", null, null, null));
         assertEquals(ResultCode.INTERNAL_ERROR.getCode(), ex.getCode());
     }
 
@@ -180,7 +212,7 @@ class SpcCapabilityServiceImplTest {
         when(parameterMapper.selectById(1L)).thenReturn(param(5, "Xbar-R", new BigDecimal("13"), new BigDecimal("7")));
         when(subgroupMapper.selectList(any())).thenReturn(subgroups(19, new BigDecimal("10"), new BigDecimal("2"), new BigDecimal("0.790569")));
 
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ"));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ", null, null, null));
         assertEquals(ResultCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 
@@ -196,7 +228,7 @@ class SpcCapabilityServiceImplTest {
         coef.setC4(new BigDecimal("0.94"));
         when(coefficientMapper.selectById(any())).thenReturn(coef);
 
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ"));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ", null, null, null));
         assertEquals(ResultCode.BAD_REQUEST.getCode(), ex.getCode());
     }
 
@@ -205,7 +237,7 @@ class SpcCapabilityServiceImplTest {
     void recalc_rejectsWhenParameterMissing() {
         when(parameterMapper.selectById(1L)).thenReturn(null);
 
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ"));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.recalcCapability(1L, "SZ", null, null, null));
         assertEquals(ResultCode.NOT_FOUND.getCode(), ex.getCode());
     }
 }

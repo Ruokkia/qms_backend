@@ -47,6 +47,15 @@ public class SpcParameter implements Serializable {
     /** 是否启用：是/否 */
     private String isActive;
 
+    /** 小数位数 */
+    private Integer decimalPlaces;
+
+    /** 是否关键特性：是/否 */
+    private String isCritical;
+
+    /** 变更备注 */
+    private String changeRemark;
+
     // ---- 系统扩展列 ----
     private String plantCode;
     private String plantName;
