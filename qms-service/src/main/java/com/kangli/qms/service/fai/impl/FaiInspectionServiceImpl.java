@@ -34,6 +34,8 @@ import com.kangli.qms.service.fai.FaiInspectionService;
 import com.kangli.qms.service.fai.SignatureIntegrity;
 import com.kangli.qms.service.spc.SpcSubgroupService;
 import com.kangli.qms.service.fai.FaiStandardService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -82,6 +84,7 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
     private final SysUserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
+    private final ObjectMapper objectMapper;
 
     public FaiInspectionServiceImpl(FaiInspectionRecordMapper recordMapper,
                                     FaiInspectionItemMapper itemMapper,
@@ -106,6 +109,8 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         this.userMapper = userMapper;
         this.auditLogService = auditLogService;
         this.passwordEncoder = new BCryptPasswordEncoder();
+        this.objectMapper = new ObjectMapper();
+        this.objectMapper.registerModule(new JavaTimeModule());
     }
 
     @Override
@@ -116,6 +121,10 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
             throw new BusinessException(ResultCode.NOT_FOUND, "变更触发记录不存在");
         }
         String plantCode = loginUser.getPlantCode().name();
+
+        // 提前加载最新激活标准模板，用于快照和复制参数项
+        FaiStandardResponse standard =
+                standardService.latestActive(trigger.getMaterialCode(), trigger.getProcessName(), plantCode);
 
         FaiInspectionRecord record = new FaiInspectionRecord();
         record.setFaiNo(generateFaiNo(plantCode));
@@ -128,17 +137,26 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         record.setItemType(trigger.getItemType());
         record.setItemCode(trigger.getItemCode());
         record.setItemName(trigger.getItemName());
+        record.setItemBarcode(trigger.getItemBarcode());
         record.setInspectionResult("待判定");
         record.setSignatureStatus("未签");
         record.setPlantCode(plantCode);
         record.setPlantName(loginUser.getPlantCode().getChineseName());
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
+
+        // 建单时记录标准配置快照，用于审计追溯
+        if (standard != null) {
+            try {
+                record.setFormSnapshot(objectMapper.writeValueAsString(standard));
+            } catch (Exception e) {
+                log.warn("序列化标准快照失败 triggerId={}", changeTriggerId, e);
+            }
+        }
+
         recordMapper.insert(record);
 
         // 复制最新激活标准模板参数项 → 检验明细（actual_value 为空，result=待判定）
-        FaiStandardResponse standard =
-                standardService.latestActive(trigger.getMaterialCode(), trigger.getProcessName(), plantCode);
         if (standard != null && standard.getItems() != null) {
             List<FaiInspectionItem> items = new ArrayList<>();
             int sort = 0;
@@ -234,6 +252,11 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         if (record == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "首件检验记录不存在");
         }
+        // 防御性校验：已签名记录不可修改检验数据
+        if ("已签".equals(record.getSignatureStatus())) {
+            throw new BusinessException(ResultCode.FORBIDDEN,
+                    "首件检验记录[" + record.getFaiNo() + "]已完成电子签名，数据不可修改。如需修改请先作废后重新建单");
+        }
         if (request.getItems() != null) {
             for (FaiItemValueRequest.ItemValue v : request.getItems()) {
                 if (v.getId() == null) {
@@ -314,7 +337,15 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
 
         // SPC 联动：仅 合格 && 已签 时触发
         if ("合格".equals(record.getInspectionResult()) && "已签".equals(record.getSignatureStatus())) {
-            spcSubgroupService.autoImportFromSignedFai(record.getId(), loginUser);
+            try {
+                spcSubgroupService.autoImportFromSignedFai(record.getId(), loginUser);
+                record.setSpcSyncAt(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
+                // 更新 sync 时间（与签名事务分离的独立 update，不影响签名本身）
+                updateSpcSyncAt(record.getId());
+            } catch (Exception e) {
+                log.error("SPC子组同步失败 faiRecordId={}，签名已完成但数据未同步到SPC", record.getId(), e);
+                // 签名已完成不回滚，SPC同步失败仅记录日志，后续可手动重试
+            }
         }
         return detail(record.getId());
     }
@@ -541,6 +572,13 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         return prefix + String.format("%04d", seq);
     }
 
+    private void updateSpcSyncAt(Long recordId) {
+        FaiInspectionRecord r = new FaiInspectionRecord();
+        r.setId(recordId);
+        r.setSpcSyncAt(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
+        recordMapper.updateById(r);
+    }
+
     private String sha256(String input) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -700,6 +738,11 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         if (record == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "首件检验记录不存在");
         }
+        // 防御性校验：已签名记录不可刷新标准
+        if ("已签".equals(record.getSignatureStatus())) {
+            throw new BusinessException(ResultCode.FORBIDDEN,
+                    "首件检验记录[" + record.getFaiNo() + "]已完成电子签名，不可刷新标准。如需修改请先作废后重新建单");
+        }
 
         Map<String, FaiInspectionStandardItem> latestStandardMap = buildStandardItemMap(record);
         if (latestStandardMap.isEmpty()) {
@@ -791,6 +834,21 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
             FaiInspectionRecord record = recordMapper.selectById(recordId);
             autoJudge(record, loginUser);
         }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public FaiInspectionRecordResponse resyncToSpc(Long id, LoginUser loginUser) {
+        FaiInspectionRecord record = recordMapper.selectById(id);
+        if (record == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "首件记录不存在");
+        }
+        if (!"合格".equals(record.getInspectionResult()) || !"已签".equals(record.getSignatureStatus())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "仅已签且合格的首件记录可同步SPC");
+        }
+        spcSubgroupService.autoImportFromSignedFai(id, loginUser);
+        updateSpcSyncAt(id);
+        return detail(id);
     }
 
     private void applySpcParameter(FaiInspectionStandardItem item, SpcParameter parameter) {

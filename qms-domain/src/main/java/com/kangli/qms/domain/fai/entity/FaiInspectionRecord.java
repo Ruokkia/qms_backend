@@ -45,12 +45,20 @@ public class FaiInspectionRecord implements Serializable {
     private String itemCode;
     /** 产品/物料名称（随 itemType 取值） */
     private String itemName;
+    /** 产品/物料条码（追溯标识，从变更触发复制） */
+    private String itemBarcode;
     /** 判定结果：待判定/合格/不合格 */
     private String inspectionResult;
     /** 电子签名状态：未签/已签 */
     private String signatureStatus;
     /** 备注 */
     private String remark;
+
+    /** 建单时检验标准快照（JSON），含标准版本与参数项明细，用于审计追溯 */
+    private String formSnapshot;
+
+    /** 最近一次同步到SPC子组的时间，空值表示从未同步 */
+    private java.time.LocalDateTime spcSyncAt;
 
     // ---- 系统扩展列 ----
     private String plantCode;

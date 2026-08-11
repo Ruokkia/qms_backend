@@ -25,6 +25,9 @@ public class FaiStandardSaveRequest {
     @ApiModelProperty(value = "分类：PRODUCT(产品)/MATERIAL(物料)", required = true)
     private String itemType;
 
+    @ApiModelProperty(value = "产品/物料条码（追溯标识）")
+    private String itemBarcode;
+
     @ApiModelProperty(value = "产品/物料代码（随 itemType 取值）")
     private String itemCode;
 
@@ -43,6 +46,12 @@ public class FaiStandardSaveRequest {
 
     @ApiModelProperty(value = "备注")
     private String remark;
+
+    @ApiModelProperty(value = "生效日期（ECN 变更/药监审计）")
+    private String effectiveDate;
+
+    @ApiModelProperty(value = "变更备注（ECN 变更/药监审计）")
+    private String changeRemark;
 
     @ApiModelProperty(value = "参数项明细列表", required = true)
     private List<FaiStandardItemRequest> items;

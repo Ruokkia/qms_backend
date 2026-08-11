@@ -49,6 +49,15 @@ public class FaiInspectionStandardItem implements Serializable {
     /** SPC 参数 ID；spcEnabled=是时必须绑定，数值标准由该参数提供 */
     private Long spcParameterId;
 
+    /** 目标值（物料-工序专属标准，非参数字典回填） */
+    private java.math.BigDecimal targetValue;
+
+    /** SPC 子组大小 n（物料-工序专属标准） */
+    private Integer subgroupSize;
+
+    /** SPC 控制图类型：Xbar-R / Xbar-S / I-MR 等（物料-工序专属标准） */
+    private String chartType;
+
     // ---- 系统扩展列 ----
     private String plantCode;
     private String plantName;

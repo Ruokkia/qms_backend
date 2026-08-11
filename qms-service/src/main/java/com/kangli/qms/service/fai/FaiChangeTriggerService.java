@@ -34,4 +34,13 @@ public interface FaiChangeTriggerService {
      * @throws BusinessException 若已建单（hasInspection=true）则拒绝作废
      */
     void voidTrigger(Long id, String reason, LoginUser loginUser);
+
+    /**
+     * 直接修改变更触发原记录（仅草稿态：status=待检验 且未关联检验单）。
+     * @param id       变更触发主键
+     * @param request  待更新的字段
+     * @param loginUser 当前操作人
+     * @throws BusinessException 若已建单（hasInspection=true）则拒绝修改
+     */
+    FaiChangeTriggerResponse update(Long id, CreateChangeTriggerRequest request, LoginUser loginUser);
 }

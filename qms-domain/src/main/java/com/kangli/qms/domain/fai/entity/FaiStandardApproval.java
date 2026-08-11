@@ -5,8 +5,8 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
-import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.kangli.qms.domain.fai.handler.JsonbTypeHandler;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -31,7 +31,7 @@ public class FaiStandardApproval implements Serializable {
     private String approvalType;
 
     /** 待审批的请求数据快照（JSON） */
-    @TableField(typeHandler = JacksonTypeHandler.class)
+    @TableField(typeHandler = JsonbTypeHandler.class)
     private JsonNode requestData;
 
     /** 提交人 */

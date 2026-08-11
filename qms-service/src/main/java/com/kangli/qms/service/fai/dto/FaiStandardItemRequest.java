@@ -47,6 +47,15 @@ public class FaiStandardItemRequest {
     @ApiModelProperty(value = "是否自动纳入SPC：是/否")
     private String spcEnabled;
 
-    @ApiModelProperty(value = "SPC参数ID；纳入SPC时必填，服务端据此写入数值标准")
+    @ApiModelProperty(value = "SPC参数ID；关联参数字典时必填，服务端据此回填参数编码/名称/单位")
     private Long spcParameterId;
+
+    @ApiModelProperty(value = "目标值（物料-工序专属标准，前端直接填写，不从参数字典回填）")
+    private java.math.BigDecimal targetValue;
+
+    @ApiModelProperty(value = "SPC 子组大小 n（物料-工序专属标准）")
+    private Integer subgroupSize;
+
+    @ApiModelProperty(value = "SPC 控制图类型：Xbar-R / Xbar-S / I-MR（物料-工序专属标准）")
+    private String chartType;
 }

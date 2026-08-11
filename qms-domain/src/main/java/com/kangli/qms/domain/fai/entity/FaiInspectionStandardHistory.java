@@ -4,8 +4,8 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.kangli.qms.domain.fai.handler.JsonbTypeHandler;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -34,11 +34,11 @@ public class FaiInspectionStandardHistory implements Serializable {
     private String changeReason;
 
     /** 变更前快照（JSON：{standard:{...}, items:[...]}），CREATE 时为 null */
-    @TableField(typeHandler = JacksonTypeHandler.class)
+    @TableField(typeHandler = JsonbTypeHandler.class)
     private JsonNode beforeSnapshot;
 
     /** 变更后快照（JSON：{standard:{...}, items:[...]}），DELETE 时为 null */
-    @TableField(typeHandler = JacksonTypeHandler.class)
+    @TableField(typeHandler = JsonbTypeHandler.class)
     private JsonNode afterSnapshot;
 
     /** 自动生成的差异摘要 */

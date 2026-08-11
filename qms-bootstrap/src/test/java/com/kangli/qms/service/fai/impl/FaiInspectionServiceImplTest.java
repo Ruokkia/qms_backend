@@ -291,4 +291,195 @@ class FaiInspectionServiceImplTest {
         assertTrue(sql.contains("signature_status"), "档案模式应强制已签条件（未签不进档案）");
         assertFalse(sql.contains("inspection_result"), "档案模式不应强制合格过滤（不合格亦可进档案）");
     }
+
+    // ---- M3-001 judgeItem 五分支判定 ----
+    // 辅助：构造 service，stub itemMapper.selectList 返回指定明细，recordMapper.selectById 返回 record，
+    // 调用 judge 触发 autoJudge → judgeItem，捕获每条明细 updateById 的 result。
+    private static FaiInspectionServiceImpl judgeServiceWithItems(
+            FaiInspectionRecord record, List<FaiInspectionItem> items) {
+        FaiInspectionRecordMapper recordMapper = mock(FaiInspectionRecordMapper.class);
+        FaiInspectionItemMapper itemMapper = mock(FaiInspectionItemMapper.class);
+        when(recordMapper.selectById(record.getId())).thenReturn(record);
+        when(itemMapper.selectList(any())).thenReturn(items);
+        return new FaiInspectionServiceImpl(
+                recordMapper, itemMapper, mock(FaiChangeTriggerMapper.class),
+                mock(FaiInspectionStandardMapper.class), mock(FaiInspectionStandardItemMapper.class),
+                mock(FaiSignatureMapper.class), mock(FaiStandardService.class),
+                mock(SpcSubgroupService.class), mock(ExceptionService.class),
+                mock(SysUserMapper.class), mock(AuditLogService.class));
+    }
+
+    /** 1) 上下限闭区间：actual 在 [lower, upper] 内 → 合格 */
+    @Test
+    void judgeItem_branch_closedInterval_insidePass() {
+        FaiInspectionRecord record = recordWithItems(1L, 1);
+        FaiInspectionItem item = item(1L, "10", "5", "15", null);
+        serviceOf(record, List.of(item)).judge(1L, user());
+        assertEquals("合格", record.getInspectionResult());
+    }
+
+    /** 1) 上下限闭区间：actual 超出 upper → 不合格 */
+    @Test
+    void judgeItem_branch_closedInterval_aboveFail() {
+        FaiInspectionRecord record = recordWithItems(1L, 1);
+        FaiInspectionItem item = item(1L, "20", "5", "15", null);
+        // 不合格会触发 createFromFai（mock 无副作用），主表结论应不合格
+        serviceOf(record, List.of(item)).judge(1L, user());
+        assertEquals("不合格", record.getInspectionResult());
+    }
+
+    /** 2) 双侧空 + standardValue 精确匹配(±0.0001)：actual=std → 合格 */
+    @Test
+    void judgeItem_branch_noLimit_standardMatchPass() {
+        FaiInspectionRecord record = recordWithItems(1L, 1);
+        FaiInspectionItem item = item(1L, "10.0000", null, null, "10");
+        serviceOf(record, List.of(item)).judge(1L, user());
+        assertEquals("合格", record.getInspectionResult());
+    }
+
+    /** 2) 双侧空 + standardValue 偏差 > 0.0001 → 不合格 */
+    @Test
+    void judgeItem_branch_noLimit_standardMismatchFail() {
+        FaiInspectionRecord record = recordWithItems(1L, 1);
+        FaiInspectionItem item = item(1L, "10.5", null, null, "10");
+        serviceOf(record, List.of(item)).judge(1L, user());
+        assertEquals("不合格", record.getInspectionResult());
+    }
+
+    /** 3) standardValue 非数字 → 不合格（无法解析基准） */
+    @Test
+    void judgeItem_branch_standardNotNumber_fail() {
+        FaiInspectionRecord record = recordWithItems(1L, 1);
+        FaiInspectionItem item = item(1L, "10", null, null, "ABC");
+        serviceOf(record, List.of(item)).judge(1L, user());
+        assertEquals("不合格", record.getInspectionResult());
+    }
+
+    /** 4) 单侧边界（仅 upper）：actual > upper → 不合格；实际值 ≤ upper → 合格 */
+    @Test
+    void judgeItem_branch_singleUpperBoundary() {
+        FaiInspectionRecord pass = recordWithItems(1L, 1);
+        FaiInspectionItem passItem = item(1L, "10", null, "15", null);
+        serviceOf(pass, List.of(passItem)).judge(1L, user());
+        assertEquals("合格", pass.getInspectionResult());
+
+        FaiInspectionRecord fail = recordWithItems(2L, 1);
+        FaiInspectionItem failItem = item(2L, "20", null, "15", null);
+        serviceOf(fail, List.of(failItem)).judge(2L, user());
+        assertEquals("不合格", fail.getInspectionResult());
+    }
+
+    /** 4) 单侧边界（仅 lower）：actual < lower → 不合格；actual ≥ lower → 合格 */
+    @Test
+    void judgeItem_branch_singleLowerBoundary() {
+        FaiInspectionRecord pass = recordWithItems(1L, 1);
+        FaiInspectionItem passItem = item(1L, "10", "5", null, null);
+        serviceOf(pass, List.of(passItem)).judge(1L, user());
+        assertEquals("合格", pass.getInspectionResult());
+
+        FaiInspectionRecord fail = recordWithItems(2L, 1);
+        FaiInspectionItem failItem = item(2L, "3", "5", null, null);
+        serviceOf(fail, List.of(failItem)).judge(2L, user());
+        assertEquals("不合格", fail.getInspectionResult());
+    }
+
+    /** 5) 无基准（actual 已录入但上下限均空且 standardValue 空）→ 不合格 */
+    @Test
+    void judgeItem_branch_noBaseline_fail() {
+        FaiInspectionRecord record = recordWithItems(1L, 1);
+        FaiInspectionItem item = item(1L, "10", null, null, null);
+        serviceOf(record, List.of(item)).judge(1L, user());
+        assertEquals("不合格", record.getInspectionResult());
+    }
+
+    /** 0) actualValue 为 null → 待判定 */
+    @Test
+    void judgeItem_branch_nullActual_pending() {
+        FaiInspectionRecord record = recordWithItems(1L, 1);
+        FaiInspectionItem item = new FaiInspectionItem();
+        item.setId(1L);
+        item.setFaiRecordId(1L);
+        item.setParamCode("P1");
+        item.setActualValue(null);
+        item.setUpperLimit(new BigDecimal("15"));
+        item.setLowerLimit(new BigDecimal("5"));
+        serviceOf(record, List.of(item)).judge(1L, user());
+        assertEquals("待判定", record.getInspectionResult());
+    }
+
+    // ---- M3-002 autoJudge 主表聚合 ----
+    /** 任一不合格 → 整单不合格（优先级最高） */
+    @Test
+    void autoJudge_anyFail_makesWholeFail() {
+        FaiInspectionRecord record = recordWithItems(1L, 3);
+        FaiInspectionItem pass = item(1L, "10", "5", "15", null);
+        FaiInspectionItem pending = itemWithNullActual(1L, "5", "15");
+        FaiInspectionItem fail = item(1L, "20", "5", "15", null);
+        serviceOf(record, List.of(pass, pending, fail)).judge(1L, user());
+        assertEquals("不合格", record.getInspectionResult());
+    }
+
+    /** 无不合格但含待判定 → 整单待判定 */
+    @Test
+    void autoJudge_noFail_butPending_makesWholePending() {
+        FaiInspectionRecord record = recordWithItems(1L, 2);
+        FaiInspectionItem pass = item(1L, "10", "5", "15", null);
+        FaiInspectionItem pending = itemWithNullActual(1L, "5", "15");
+        serviceOf(record, List.of(pass, pending)).judge(1L, user());
+        assertEquals("待判定", record.getInspectionResult());
+    }
+
+    /** 全部合格 → 整单合格 */
+    @Test
+    void autoJudge_allPass_makesWholePass() {
+        FaiInspectionRecord record = recordWithItems(1L, 2);
+        FaiInspectionItem a = item(1L, "10", "5", "15", null);
+        FaiInspectionItem b = item(1L, "12", "5", "15", null);
+        serviceOf(record, List.of(a, b)).judge(1L, user());
+        assertEquals("合格", record.getInspectionResult());
+    }
+
+    // ---- 辅助方法 ----
+    private FaiInspectionRecord recordWithItems(Long id, int size) {
+        FaiInspectionRecord r = new FaiInspectionRecord();
+        r.setId(id);
+        r.setPlantCode("SZ");
+        r.setPlantName("深圳");
+        r.setFaiNo("FAI-T-" + id);
+        r.setMaterialCode("M" + id);
+        r.setInspectionResult("待判定");
+        r.setSignatureStatus("未签");
+        return r;
+    }
+
+    private FaiInspectionItem item(Long recordId, String actual, String lower, String upper, String std) {
+        FaiInspectionItem it = new FaiInspectionItem();
+        it.setId(recordId * 10L + (lower == null && upper == null ? 1L : 2L));
+        it.setFaiRecordId(recordId);
+        it.setParamCode("P1");
+        it.setActualValue(actual == null ? null : new BigDecimal(actual));
+        it.setLowerLimit(lower == null ? null : new BigDecimal(lower));
+        it.setUpperLimit(upper == null ? null : new BigDecimal(upper));
+        it.setStandardValue(std);
+        return it;
+    }
+
+    private FaiInspectionItem itemWithNullActual(Long recordId, String lower, String upper) {
+        FaiInspectionItem it = new FaiInspectionItem();
+        it.setId(recordId * 10L + 3L);
+        it.setFaiRecordId(recordId);
+        it.setParamCode("P1");
+        it.setActualValue(null);
+        it.setLowerLimit(lower == null ? null : new BigDecimal(lower));
+        it.setUpperLimit(upper == null ? null : new BigDecimal(upper));
+        return it;
+    }
+
+    private FaiInspectionServiceImpl serviceOf(FaiInspectionRecord record, List<FaiInspectionItem> items) {
+        return judgeServiceWithItems(record, items);
+    }
+
+    private LoginUser user() {
+        return LoginUser.builder().userId(9L).realName("测试员").build();
+    }
 }

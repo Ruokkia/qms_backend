@@ -13,6 +13,7 @@ import com.kangli.qms.service.fai.dto.FaiStandardSaveRequest;
 import com.kangli.qms.service.fai.dto.FaiStandardItemRequest;
 import com.kangli.qms.service.fai.dto.FaiStandardHistoryResponse;
 import com.kangli.qms.service.fai.dto.FaiStandardApprovalResponse;
+import com.kangli.qms.service.fai.dto.FaiStandardSpcParamVO;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandard;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandardItem;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandardHistory;
@@ -132,6 +133,10 @@ public class FaiStandardServiceImpl implements FaiStandardService {
 
         FaiInspectionStandard standard = new FaiInspectionStandard();
         BeanUtils.copyProperties(req, standard);
+        // BeanUtils 不支持 String → LocalDate 转换，手动处理
+        if (StringUtils.hasText(req.getEffectiveDate())) {
+            standard.setEffectiveDate(java.time.LocalDate.parse(req.getEffectiveDate()));
+        }
         standard.setId(null);
         standard.setPlantCode(plantCode);
         standard.setPlantName(plantName);
@@ -175,6 +180,12 @@ public class FaiStandardServiceImpl implements FaiStandardService {
         validateAndResolveSpcItems(req, plantCode);
 
         BeanUtils.copyProperties(req, standard, "id", "plantCode", "plantName", "stdVersion", "createdBy", "createdAt");
+        // BeanUtils 不支持 String → LocalDate 转换，手动处理
+        if (StringUtils.hasText(req.getEffectiveDate())) {
+            standard.setEffectiveDate(java.time.LocalDate.parse(req.getEffectiveDate()));
+        } else {
+            standard.setEffectiveDate(null);
+        }
         standard.setUpdatedBy(loginUser.getRealName());
         standardMapper.updateById(standard);
 
@@ -211,17 +222,13 @@ public class FaiStandardServiceImpl implements FaiStandardService {
         // P0: 保存删除前快照
         String beforeSnapshot = buildSnapshot(id);
 
-        // 逻辑删除参数项
-        LambdaUpdateWrapper<FaiInspectionStandardItem> delWrapper = new LambdaUpdateWrapper<>();
-        delWrapper.eq(FaiInspectionStandardItem::getStandardId, id)
-                .set(FaiInspectionStandardItem::getIsDeleted, (short) 1);
-        standardItemMapper.update(null, delWrapper);
-        // 逻辑删除主表
-        LambdaUpdateWrapper<FaiInspectionStandard> stdWrapper = new LambdaUpdateWrapper<>();
-        stdWrapper.eq(FaiInspectionStandard::getId, id)
-                .set(FaiInspectionStandard::getIsDeleted, (short) 1)
-                .set(FaiInspectionStandard::getUpdatedBy, loginUser.getRealName());
-        standardMapper.update(null, stdWrapper);
+        // 逻辑删除参数项（@TableLogic 自动转 DELETE 为 UPDATE SET is_deleted=1）
+        LambdaQueryWrapper<FaiInspectionStandardItem> itemQuery = new LambdaQueryWrapper<>();
+        itemQuery.eq(FaiInspectionStandardItem::getStandardId, id);
+        standardItemMapper.delete(itemQuery);
+
+        // 逻辑删除主表（@TableLogic 自动转 DELETE 为 UPDATE SET is_deleted=1, version=version+1）
+        standardMapper.deleteById(id);
 
         // P0: 记录删除历史
         recordHistory(id, "DELETE", beforeSnapshot, null, null, loginUser);
@@ -241,10 +248,14 @@ public class FaiStandardServiceImpl implements FaiStandardService {
             e.setStandardValue(it.getStandardValue());
             e.setUpperLimit(it.getUpperLimit());
             e.setLowerLimit(it.getLowerLimit());
+            e.setTargetValue(it.getTargetValue());
+            e.setSubgroupSize(it.getSubgroupSize());
+            e.setChartType(it.getChartType());
             e.setUnit(it.getUnit());
             e.setIsRequired(it.getIsRequired());
             e.setSortOrder(it.getSortOrder());
-            e.setSpcEnabled(StringUtils.hasText(it.getSpcEnabled()) ? it.getSpcEnabled() : "否");
+            // spcEnabled 自动计算：有 spcParameterId 即 '是'，否则 '否'
+            e.setSpcEnabled(it.getSpcParameterId() != null ? "是" : "否");
             e.setSpcParameterId(it.getSpcParameterId());
             e.setPlantCode(plantCode);
             e.setPlantName(plantName);
@@ -299,39 +310,31 @@ public class FaiStandardServiceImpl implements FaiStandardService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "标准至少包含一项参数");
         }
         for (FaiStandardItemRequest it : req.getItems()) {
-            // 注意：paramName 不在此处校验空值。下方会强制从 SPC 参数回带 paramName，
-            // 若此处先校验会因前端未传 paramName（仅传 spcParameterId）而误报“参数名称不能为空”。
-            if (!StringUtils.hasText(it.getParamCategory())) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "参数类别(AQL/关键尺寸/性能参数)不能为空");
-            }
+            // paramName 会由 SPC 参数选择时自动回填，不在此处校验空值
             if (!StringUtils.hasText(it.getIsRequired())) {
                 throw new BusinessException(ResultCode.BAD_REQUEST, "是否必检不能为空");
             }
-            if (!"是".equals(it.getSpcEnabled())) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "首件检验项目必须绑定SPC参数");
+            if (it.getSpcParameterId() != null) {
+                // SPC 绑定模式：必须选择有效的 SPC 参数
+                SpcParameter param = spcParameterMapper.selectById(it.getSpcParameterId());
+                if (param == null || param.getIsDeleted() == 1 || !plantCode.equals(param.getPlantCode())
+                        || !"是".equals(param.getIsActive())) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST, "选择的SPC参数不存在、未启用或不属于当前工厂");
+                }
+                SpcProcess process = spcProcessMapper.selectById(param.getProcessId());
+                if (process == null || process.getIsDeleted() == 1
+                        || !plantCode.equals(process.getPlantCode())
+                        || !process.getProcessCode().equals(req.getProcessCode())) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST, "选择的SPC参数不属于当前首件工序");
+                }
+                // 仅从 SPC 参数字典回填编码/名称/单位（只读回显）。
+                // 目标值/USL/LSL/子组n/控制图类型属于物料-工序专属标准，
+                // 由前端在本页面表格行编辑人工填写，不从参数字典级联。
+                it.setParamName(param.getParamName());
+                it.setParamCode(param.getParamCode());
+                it.setUnit(param.getUnit());
             }
-            if (it.getSpcParameterId() == null) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "纳入SPC的首件项目必须选择SPC参数");
-            }
-            SpcParameter param = spcParameterMapper.selectById(it.getSpcParameterId());
-            if (param == null || param.getIsDeleted() == 1 || !plantCode.equals(param.getPlantCode())
-                    || !"是".equals(param.getIsActive())) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "选择的SPC参数不存在、未启用或不属于当前工厂");
-            }
-            SpcProcess process = spcProcessMapper.selectById(param.getProcessId());
-            if (process == null || process.getIsDeleted() == 1
-                    || !plantCode.equals(process.getPlantCode())
-                    || !process.getProcessCode().equals(req.getProcessCode())) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "选择的SPC参数不属于当前首件工序");
-            }
-            // 不信任前端传入的数值标准，强制从 SPC 参数复制。
-            it.setParamName(param.getParamName());
-            it.setParamCode(param.getParamCode());
-            it.setUnit(param.getUnit());
-            it.setStandardValue(param.getTargetValue() == null ? null
-                    : param.getTargetValue().stripTrailingZeros().toPlainString());
-            it.setUpperLimit(param.getUpperSpecLimit());
-            it.setLowerLimit(param.getLowerSpecLimit());
+            // 不强制 paramCategory：前端表格已不包含该列，可选填
         }
     }
 
@@ -774,23 +777,82 @@ public class FaiStandardServiceImpl implements FaiStandardService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 从 fai_inspection_standard（检验标准维护）按 分类 + 代码 + 厂区去重取已维护工序。
+     * itemCode 非空时仅返回该代码绑定的工序；为空时返回该分类下全部已维护工序。
+     * 保证变更触发工序下拉与实际维护的标准一致。
+     */
     @Override
-    public List<FaiStandardProcessVO> listProcessesByItemType(String plantCode, String itemType) {
+    public List<FaiStandardProcessVO> listProcessesByItemType(String plantCode, String itemType, String itemCode) {
         LambdaQueryWrapper<FaiInspectionStandard> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(FaiInspectionStandard::getPlantCode, plantCode)
                 .eq(FaiInspectionStandard::getItemType, itemType)
+                .eq(StringUtils.hasText(itemCode), FaiInspectionStandard::getItemCode, itemCode)
                 .isNotNull(FaiInspectionStandard::getProcessCode)
                 .ne(FaiInspectionStandard::getProcessCode, "")
-                .select(FaiInspectionStandard::getProcessCode, FaiInspectionStandard::getProcessName);
+                .select(FaiInspectionStandard::getProcessCode, FaiInspectionStandard::getProcessName)
+                .groupBy(FaiInspectionStandard::getProcessCode, FaiInspectionStandard::getProcessName)
+                .orderByAsc(FaiInspectionStandard::getProcessCode);
         List<FaiInspectionStandard> list = standardMapper.selectList(wrapper);
         return list.stream()
-                .collect(Collectors.toMap(
-                        FaiInspectionStandard::getProcessCode,
-                        s -> new FaiStandardProcessVO(s.getProcessCode(), s.getProcessName()),
-                        (a, b) -> a,
-                        LinkedHashMap::new
-                ))
-                .values().stream()
+                .map(s -> new FaiStandardProcessVO(s.getProcessCode(), s.getProcessName()))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<FaiStandardSpcParamVO> listSpcParams(String itemType, String itemCode, String processName, String plantCode) {
+        FaiStandardResponse standard = latestActive(itemCode, itemType, processName, plantCode);
+        if (standard == null || standard.getItems() == null || standard.getItems().isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 筛选 spcEnabled="是" 的项
+        List<FaiInspectionStandardItem> spcItems = standard.getItems().stream()
+                .filter(isItem -> "是".equals(isItem.getSpcEnabled()))
+                .collect(Collectors.toList());
+
+        if (spcItems.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 批量查 SPC 参数字典（用于补全 subgroupSize / chartType）
+        Set<Long> spcParamIds = spcItems.stream()
+                .map(FaiInspectionStandardItem::getSpcParameterId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, SpcParameter> spcParamMap = spcParamIds.isEmpty() ? Collections.emptyMap() :
+                spcParameterMapper.selectBatchIds(spcParamIds).stream()
+                        .collect(Collectors.toMap(SpcParameter::getId, p -> p));
+
+        return spcItems.stream()
+                .map(it -> {
+                    SpcParameter spcParam = it.getSpcParameterId() != null
+                            ? spcParamMap.get(it.getSpcParameterId())
+                            : null;
+
+                    Integer subgroupSize = it.getSubgroupSize();
+                    if (subgroupSize == null && spcParam != null) {
+                        subgroupSize = spcParam.getSubgroupSize();
+                    }
+
+                    String chartType = it.getChartType();
+                    if (!StringUtils.hasText(chartType) && spcParam != null) {
+                        chartType = spcParam.getChartType();
+                    }
+
+                    return new FaiStandardSpcParamVO(
+                            it.getId(),
+                            it.getSpcParameterId(),
+                            it.getParamName(),
+                            it.getParamCode(),
+                            it.getUpperLimit(),
+                            it.getLowerLimit(),
+                            it.getStandardValue(),
+                            it.getUnit(),
+                            subgroupSize,
+                            chartType
+                    );
+                })
                 .collect(Collectors.toList());
     }
 

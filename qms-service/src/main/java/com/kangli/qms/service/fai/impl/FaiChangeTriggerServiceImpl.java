@@ -150,6 +150,61 @@ public class FaiChangeTriggerServiceImpl implements FaiChangeTriggerService {
         log.info("变更触发 id={} 已作废, 操作人={}, 原因={}", id, loginUser.getRealName(), reason);
     }
 
+    @Override
+    public FaiChangeTriggerResponse update(Long id, CreateChangeTriggerRequest request, LoginUser loginUser) {
+        FaiChangeTrigger entity = changeTriggerMapper.selectById(id);
+        if (entity == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "变更触发记录不存在");
+        }
+
+        // 厂区隔离：仅允许操作当前用户所属厂区的记录
+        String plantCode = loginUser.getPlantCode().name();
+        if (!plantCode.equals(entity.getPlantCode())) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "无权操作其他厂区的记录");
+        }
+
+        // 已建单（已关联检验单）的记录不允许直接修改，需走更正流程
+        if (hasInspection(id)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "已建单的变更触发记录不可直接修改，请通过「新建更正单」走更正流程");
+        }
+
+        // 保存变更前快照用于审计
+        String beforeSnapshot = JSONUtil.toJsonStr(toResponse(entity, false));
+
+        // 覆盖可编辑字段（不改动 status / 厂区 / 创建人）
+        entity.setTriggerType(request.getTriggerType());
+        entity.setItemType(request.getItemType());
+        entity.setItemCode(request.getItemCode());
+        entity.setItemName(request.getItemName());
+        entity.setItemBarcode(request.getItemBarcode());
+        entity.setBatchNo(request.getBatchNo());
+        entity.setProcessName(request.getProcessName());
+        entity.setProcessCode(request.getProcessCode());
+        entity.setTriggerReason(request.getTriggerReason());
+        entity.setRemark(request.getRemark());
+        // 冗余兼容列同步
+        if (!StringUtils.hasText(request.getMaterialCode())) {
+            entity.setMaterialCode(request.getItemCode());
+        } else {
+            entity.setMaterialCode(request.getMaterialCode());
+        }
+        if (!StringUtils.hasText(request.getMaterialName())) {
+            entity.setMaterialName(request.getItemName());
+        } else {
+            entity.setMaterialName(request.getMaterialName());
+        }
+        entity.setUpdatedBy(loginUser.getRealName());
+
+        changeTriggerMapper.updateById(entity);
+
+        // 记录审计日志
+        auditLogService.record("fai_change_trigger", id, "UPDATE",
+                beforeSnapshot, JSONUtil.toJsonStr(toResponse(entity, false)), "直接修改原记录");
+
+        log.info("变更触发 id={} 已更新, 操作人={}", id, loginUser.getRealName());
+        return toResponse(entity, false);
+    }
+
     private boolean hasInspection(Long changeTriggerId) {
         Long count = inspectionRecordMapper.selectCount(
                 new LambdaQueryWrapper<FaiInspectionRecord>()

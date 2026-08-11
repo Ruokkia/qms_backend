@@ -33,6 +33,9 @@ public class FaiInspectionStandard implements Serializable {
     private String itemCode;
     /** 产品/物料名称（随 itemType 取值） */
     private String itemName;
+    /** 产品/物料条码（追溯标识） */
+    private String itemBarcode;
+
     /** 工序：装配/焊接/检测 */
     private String processName;
     private String processCode;
@@ -42,6 +45,12 @@ public class FaiInspectionStandard implements Serializable {
     private String isActive;
     /** 备注 */
     private String remark;
+
+    /** 生效日期（ECN 变更/药监审计） */
+    private java.time.LocalDate effectiveDate;
+
+    /** 变更备注（ECN 变更/药监审计） */
+    private String changeRemark;
 
     /** 最近复审时间（P3：定期复审提醒） */
     private LocalDateTime lastReviewedAt;

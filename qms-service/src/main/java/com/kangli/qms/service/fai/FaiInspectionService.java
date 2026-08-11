@@ -71,4 +71,7 @@ public interface FaiInspectionService {
 
     /** SPC 参数更新后，主动同步所有未签名首件记录的标准快照。 */
     void syncUpdatedSpcParameter(SpcParameter parameter, LoginUser loginUser);
+
+    /** 手动重试将已签首件记录同步到 SPC 子组（用于签名时自动同步失败后的补救）。 */
+    FaiInspectionRecordResponse resyncToSpc(Long id, LoginUser loginUser);
 }

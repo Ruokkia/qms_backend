@@ -21,6 +21,7 @@ import com.kangli.qms.service.fai.dto.FaiStandardSaveRequest;
 import com.kangli.qms.service.fai.dto.FaiStandardHistoryResponse;
 import com.kangli.qms.service.fai.dto.FaiStandardApprovalResponse;
 import com.kangli.qms.service.fai.dto.FaiStandardProcessVO;
+import com.kangli.qms.service.fai.dto.FaiStandardSpcParamVO;
 import com.kangli.qms.service.fai.FaiChangeTriggerService;
 import com.kangli.qms.service.fai.FaiInspectionService;
 import com.kangli.qms.service.fai.FaiStandardService;
@@ -110,6 +111,15 @@ public class FaiController {
         return R.ok(null, "作废成功");
     }
 
+    @PutMapping("/change-triggers/{id}")
+    @ApiOperation(value = "直接修改变更触发原记录（仅草稿态：未建单、未检验）")
+    public R<FaiChangeTriggerResponse> updateChangeTrigger(
+            @ApiParam(value = "变更触发 id") @PathVariable Long id,
+            @RequestBody CreateChangeTriggerRequest request) {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(changeTriggerService.update(id, request, loginUser), "修改成功");
+    }
+
     // ===== 首件检验 =====
 
     @PostMapping("/inspections")
@@ -183,6 +193,13 @@ public class FaiController {
         return R.ok(inspectionService.signature(request, loginUser));
     }
 
+    @PostMapping("/inspections/{id}/resync-spc")
+    @ApiOperation(value = "手动重同步已签首件记录到SPC子组（签名时自动同步失败的补救操作）")
+    public R<FaiInspectionRecordResponse> resyncToSpc(@PathVariable Long id) {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(inspectionService.resyncToSpc(id, loginUser), "SPC同步成功");
+    }
+
     @GetMapping("/inspections/{id}/report")
     @ApiOperation(value = "首件检验报告（JSON）")
     public R<FaiReportResponse> report(@PathVariable Long id) {
@@ -240,6 +257,27 @@ public class FaiController {
         LoginUser loginUser = getCurrentLoginUser();
         standardService.deleteStandard(id, loginUser);
         return R.ok(null, "删除成功");
+    }
+
+    // ↑ 固定路径的 GET 端点必须放在 /standards/{id} 之前，否则会被 {id} 拦截导致 NumberFormatException
+
+    @GetMapping("/standards/processes")
+    @ApiOperation(value = "按分类+代码取检验标准已维护工序（去重），供变更触发下拉")
+    public R<List<FaiStandardProcessVO>> listStandardProcesses(
+            @ApiParam(value = "分类：PRODUCT/MATERIAL") @RequestParam String itemType,
+            @ApiParam(value = "产品/物料代码（非空时仅返回该代码绑定的工序）") @RequestParam(required = false) String itemCode) {
+        return R.ok(standardService.listProcessesByItemType(
+                getCurrentLoginUser().getPlantCode().name(), itemType, itemCode));
+    }
+
+    @GetMapping("/standards/spc-params")
+    @ApiOperation(value = "SPC数据采集专用：获取分类+代码+工序下spcEnabled=是的标准参数项（含USL/LSL/目标值/子组大小/控制图类型）")
+    public R<List<FaiStandardSpcParamVO>> listStandardSpcParams(
+            @ApiParam(value = "分类：PRODUCT/MATERIAL") @RequestParam String itemType,
+            @ApiParam(value = "产品/物料代码") @RequestParam String itemCode,
+            @ApiParam(value = "工序") @RequestParam String processName) {
+        LoginUser loginUser = getCurrentLoginUser();
+        return R.ok(standardService.listSpcParams(itemType, itemCode, processName, loginUser.getPlantCode().name()));
     }
 
     @GetMapping("/standards/{id}")
@@ -324,14 +362,6 @@ public class FaiController {
     @ApiOperation(value = "查询复审逾期的标准列表")
     public R<List<FaiStandardResponse>> overdueReviews() {
         return R.ok(standardService.getOverdueReviews(getCurrentLoginUser().getPlantCode().name()));
-    }
-
-    @GetMapping("/standards/processes")
-    @ApiOperation(value = "按分类取检验标准已维护工序（去重），供变更触发下拉")
-    public R<List<FaiStandardProcessVO>> listStandardProcesses(
-            @ApiParam(value = "分类：PRODUCT/MATERIAL") @RequestParam String itemType) {
-        return R.ok(standardService.listProcessesByItemType(
-                getCurrentLoginUser().getPlantCode().name(), itemType));
     }
 
     // ===== SPC 联动 =====

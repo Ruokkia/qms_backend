@@ -6,6 +6,7 @@ import com.kangli.qms.service.fai.dto.FaiStandardResponse;
 import com.kangli.qms.service.fai.dto.FaiStandardSaveRequest;
 import com.kangli.qms.service.fai.dto.FaiStandardHistoryResponse;
 import com.kangli.qms.service.fai.dto.FaiStandardApprovalResponse;
+import com.kangli.qms.service.fai.dto.FaiStandardSpcParamVO;
 
 import java.util.List;
 
@@ -109,8 +110,16 @@ public interface FaiStandardService {
     List<FaiStandardResponse> getOverdueReviews(String plantCode);
 
     /**
-     * 按分类 + 厂区从检验标准中去重取已维护工序列表（processCode/processName）。
+     * 按分类 + 代码 + 厂区从检验标准中去重取已维护工序列表（processCode/processName）。
      * 供变更触发工序下拉使用，保证下拉项与标准一致。
+     * itemCode 非空时仅返回该代码绑定的工序；为空时返回该分类下全部已维护工序。
      */
-    List<FaiStandardProcessVO> listProcessesByItemType(String plantCode, String itemType);
+    List<FaiStandardProcessVO> listProcessesByItemType(String plantCode, String itemType, String itemCode);
+
+    /**
+     * SPC 数据采集专用：查询某 分类+代码+工序 的最新激活标准中 spcEnabled="是" 的参数项，
+     * 返回 FaiStandardSpcParamVO 列表（含 USL/LSL/目标值/子组大小/控制图类型）。
+     * spcParameterId 同时用于 SPC 参数字典补全 subgroupSize/chartType 的降级。
+     */
+    List<FaiStandardSpcParamVO> listSpcParams(String itemType, String itemCode, String processName, String plantCode);
 }
