@@ -105,19 +105,16 @@ class EightDServiceImplTest {
         return r;
     }
 
-    /** M2-020：nextStep D1->D2 前进，落库步骤前进。 */
+    /** M2-020：新业务流程（CAPA-8D 交错）下，D1 不可直接 nextStep，必须走团队提交与审核流程。 */
     @Test
-    void m2_020_nextStepAdvancesFromD1ToD2() {
+    void m2_020_d1NextStepRejectedByTeamSubmitGate() {
         Exception8d r = record("D1", 1);
         when(exception8dMapper.selectByExceptionId(1L)).thenReturn(r);
         when(exceptionOrderMapper.selectById(1L)).thenReturn(order(1L, "待整改", "进行中"));
 
-        EightDVO result = service.nextStep(1L);
-
-        assertEquals("D2", result.getCurrentStep());
-        verify(exception8dMapper).updateById(any(Exception8d.class));
-        // 留痕：saveOrUpdate 写一条 SAVE + nextStep 末尾写一条 NEXT_STEP，共 2 条
-        verify(stepLogMapper, times(2)).insert(any(Exception8dStepLog.class));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.nextStep(1L));
+        assertEquals(ResultCode.BAD_REQUEST.getCode(), ex.getCode());
+        verify(exception8dMapper, never()).updateById(any(Exception8d.class));
     }
 
     /** M2-021：当前步骤内容为空时拒绝前进。 */
@@ -215,7 +212,13 @@ class EightDServiceImplTest {
     @Test
     void m2_028_saveOrUpdateWritesSaveLog() {
         when(exceptionOrderMapper.selectById(1L)).thenReturn(order(1L, "待整改", "进行中"));
-        when(exception8dMapper.selectByExceptionId(1L)).thenReturn(null);
+        // 第一次查（无 existing）返回 null；insert 后 saveOrUpdate refetch（line 172）返回新记录
+        Exception8d newRecord = new Exception8d();
+        newRecord.setId(1L);
+        newRecord.setCurrentStep("D1");
+        newRecord.setD1Team("团队X");
+        newRecord.setIsDeleted((short) 0);
+        when(exception8dMapper.selectByExceptionId(1L)).thenReturn(null, newRecord);
         when(exception8dMapper.selectByExceptionIdIgnoreDeleted(1L)).thenReturn(null);
 
         EightDSaveDTO dto = new EightDSaveDTO();
