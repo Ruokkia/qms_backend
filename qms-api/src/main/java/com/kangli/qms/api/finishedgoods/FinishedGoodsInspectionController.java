@@ -59,7 +59,8 @@ public class FinishedGoodsInspectionController {
             wrapper.like(FinishedGoodsInspection::getInspectionResult, inspectionResultLike);
         } else if (StringUtils.hasText(inspectionResult)) {
             if ("__OTHER__".equals(inspectionResult)) {
-                wrapper.notIn(FinishedGoodsInspection::getInspectionResult, "合格", "不合格");
+                wrapper.and(w -> w.notIn(FinishedGoodsInspection::getInspectionResult, "合格", "不合格")
+                                .or().isNull(FinishedGoodsInspection::getInspectionResult));
             } else {
                 wrapper.eq(FinishedGoodsInspection::getInspectionResult, inspectionResult);
             }
@@ -106,6 +107,12 @@ public class FinishedGoodsInspectionController {
                                   LocalDate start, LocalDate end) {
         if (start != null) wrapper.ge(column, start.atStartOfDay());
         if (end != null) wrapper.le(column, end.atTime(LocalTime.MAX));
+    }
+
+    @GetMapping("/by-barcode")
+    @ApiOperation(value = "按条码查询成品检验详情")
+    public R<FinishedGoodsInspectionResponse> getByBarcode(@RequestParam String barcode) {
+        return R.ok(finishedGoodsService.getByBarcode(barcode));
     }
 
     @GetMapping("/{id}")

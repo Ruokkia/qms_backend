@@ -12,6 +12,8 @@ public interface FinishedGoodsInspectionService extends IService<FinishedGoodsIn
 
     FinishedGoodsInspectionResponse detail(Long id);
 
+    FinishedGoodsInspectionResponse getByBarcode(String barcode);
+
     PageResult<FinishedGoodsInspectionResponse> page(Page<FinishedGoodsInspection> page,
                                                      LambdaQueryWrapper<FinishedGoodsInspection> wrapper);
 

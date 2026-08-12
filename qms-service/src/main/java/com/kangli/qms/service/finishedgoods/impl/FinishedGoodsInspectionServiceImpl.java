@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.LoginUser;
+import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.common.PageResult;
 import com.kangli.qms.common.ResultCode;
 import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
@@ -54,6 +55,24 @@ public class FinishedGoodsInspectionServiceImpl
             throw new BusinessException(ResultCode.NOT_FOUND, "记录不存在");
         }
         return toResponse(record);
+    }
+
+    @Override
+    public FinishedGoodsInspectionResponse getByBarcode(String barcode) {
+        LoginUser loginUser = LoginUserHolder.get();
+        if (loginUser == null || loginUser.getPlantCode() == null) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "未获取到登录用户信息");
+        }
+        return lambdaQuery()
+                .eq(FinishedGoodsInspection::getProdBatchOrSn, barcode)
+                .eq(FinishedGoodsInspection::getPlantCode, loginUser.getPlantCode().name())
+                .orderByDesc(FinishedGoodsInspection::getUpdatedAt)
+                .list()
+                .stream()
+                .filter(e -> !isDeleted(e))
+                .findFirst()
+                .map(this::toResponse)
+                .orElse(null);
     }
 
     @Override
@@ -172,13 +191,12 @@ public class FinishedGoodsInspectionServiceImpl
                 record.setQcReviewer(loginUser.getRealName());
                 record.setQcReviewTime(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
             }
-            // 品管审核通过且检验结论为不合格时，自动触发「成品不良」异常单
-            // 改为依赖最终状态触发（不再要求"待审核→已审核"跃迁），
-            // 由 createFromFinishedGoods 内部按 sourceId+sourceType 防重，重复触发不会建重复单
+            // 异常单改为由 ExceptionAutoTriggerScheduler 定时轮询扫描库内不合格记录自动创建，
+            // 不再在接口线程内同步派生。仅记录日志，建单动作移交调度器。
             if ("不合格".equals(record.getInspectionResult())
                     && record.getUnqualifiedQty() != null
                     && record.getUnqualifiedQty().compareTo(BigDecimal.ZERO) > 0) {
-                exceptionService.createFromFinishedGoods(record, loginUser);
+                log.info("成品检验记录 {} 审核不合格，将由定时调度自动创建异常单", record.getId());
             }
         } else if (!APPROVED.equals(newQc)) {
             record.setQcReviewer(null);

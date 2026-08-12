@@ -16,6 +16,9 @@ public interface MaterialInspectionService extends IService<MaterialInspection> 
     /** 单条保存并触发字段驱动建异常单 */
     MaterialInspection saveWithException(MaterialInspection record, boolean autoCreateException);
 
+    /** 按物料条码查询检验详情（多条取最新，查不到返回 null） */
+    MaterialInspection getByBarcode(String barcode);
+
     /** 重点供应商质量趋势（自定义时间范围内来料批次量 TopN） */
     KeySupplierTrendVO keySupplierTrend(int topN, String startDate, String endDate);
 

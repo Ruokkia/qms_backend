@@ -248,7 +248,6 @@ public class IncomingTraceService {
             row.put("category", b.getCategory());
             row.put("quantity", b.getWorkOrderQty());
             row.put("workOrderNo", b.getWorkOrderNo());
-            row.put("processName", b.getProcessName());
             row.put("plantCode", b.getPlantCode());
             row.put("sonLotNo", b.getSonLotNo());
             result.add(row);

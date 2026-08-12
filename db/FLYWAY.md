@@ -41,7 +41,12 @@ rollback, and they also break ISO13485 electronic-record traceability:
 - `DELETE` (including `DELETE FROM`, `ON DELETE` FK actions are fine)
 - `UPDATE` (even "logical delete" `SET is_deleted = 1`)
 - `TRUNCATE`
-- `DROP` (`DROP TABLE` / `DROP COLUMN` / `DROP INDEX`)
+- `DROP TABLE` / `DROP COLUMN`
+
+`DROP INDEX` is allowed **only** when immediately followed by a replacement
+`CREATE INDEX` in the same migration file, and only for changing index type
+(e.g. UNIQUE → plain) or renaming. The replacement index must preserve the
+same columns and WHERE clause semantics.
 
 ### Enforcement (soft rule -> hard gate)
 

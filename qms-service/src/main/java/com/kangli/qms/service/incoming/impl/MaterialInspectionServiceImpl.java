@@ -63,8 +63,10 @@ public class MaterialInspectionServiceImpl
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
         baseMapper.insert(record);
-        if ("不合格".equals(record.getInspectionResult()) && autoCreateException) {
-            exceptionService.createFromMaterialInspection(record, loginUser);
+        // 异常单改为由 ExceptionAutoTriggerScheduler 定时轮询扫描库内不合格记录自动创建，
+        // 不再在接口线程内同步派生（解耦检验业务与异常生成）。
+        if ("不合格".equals(record.getInspectionResult())) {
+            log.info("来料检验记录 {} 结论为不合格，将由定时调度自动创建异常单", record.getId());
         }
         return record;
     }
@@ -73,6 +75,19 @@ public class MaterialInspectionServiceImpl
     @Transactional
     public boolean save(MaterialInspection entity) {
         return super.save(entity);
+    }
+
+    @Override
+    public MaterialInspection getByBarcode(String barcode) {
+        return lambdaQuery()
+                .eq(MaterialInspection::getMaterialBarcode, barcode)
+                .eq(MaterialInspection::getPlantCode, getCurrentLoginUser().getPlantCode().name())
+                .orderByDesc(MaterialInspection::getUpdatedAt)
+                .list()
+                .stream()
+                .filter(e -> e.getIsDeleted() == null || e.getIsDeleted() != 1)
+                .findFirst()
+                .orElse(null);
     }
 
     @Override
@@ -88,14 +103,12 @@ public class MaterialInspectionServiceImpl
             return false;
         }
         MaterialInspection after = getById(entity.getId());
-        // 改为依赖最终状态触发：只要更新后检验结论为不合格即尝试创建异常单，
-        // 不再要求"合格→不合格"跃迁（避免新建时未勾选 autoCreateException、
-        // 或记录被直接置为不合格时漏建）。createFromMaterialInspection 内部按
-        // sourceId+sourceType="来料不良" 防重，重复触发不会建重复单。
+        // 异常单改为由 ExceptionAutoTriggerScheduler 定时轮询扫描库内不合格记录自动创建，
+        // 不再在接口线程内同步派生。仅记录日志，建单动作移交调度器。
         if ("不合格".equals(after.getInspectionResult())) {
-            exceptionService.createFromMaterialInspection(after, getCurrentLoginUser());
+            log.info("来料检验记录 {} 更新后结论为不合格，将由定时调度自动创建异常单", after.getId());
             if ("合格".equals(oldResult)) {
-                log.info("来料检验状态由合格变为不合格，已自动创建异常单：materialInspectionId={}", after.getId());
+                log.info("来料检验状态由合格变为不合格，待定时调度创建异常单：materialInspectionId={}", after.getId());
             }
         }
         return true;

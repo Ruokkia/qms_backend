@@ -45,6 +45,7 @@ public class MaterialInspectionController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String reviewStatus,
             @RequestParam(required = false) String inspectionResult,
+            @RequestParam(required = false) String inspectionResultLike,
             @RequestParam(required = false) String supplierCode,
             @RequestParam(required = false) String materialCode,
             @RequestParam(required = false) String startDate,
@@ -64,8 +65,15 @@ public class MaterialInspectionController {
         if (StringUtils.hasText(reviewStatus)) {
             wrapper.eq(MaterialInspection::getReviewStatus, reviewStatus);
         }
-        if (StringUtils.hasText(inspectionResult)) {
-            wrapper.eq(MaterialInspection::getInspectionResult, inspectionResult);
+        if (StringUtils.hasText(inspectionResultLike)) {
+            wrapper.like(MaterialInspection::getInspectionResult, inspectionResultLike);
+        } else if (StringUtils.hasText(inspectionResult)) {
+            if ("__OTHER__".equals(inspectionResult)) {
+                wrapper.and(w -> w.notIn(MaterialInspection::getInspectionResult, "合格", "不合格")
+                                .or().isNull(MaterialInspection::getInspectionResult));
+            } else {
+                wrapper.eq(MaterialInspection::getInspectionResult, inspectionResult);
+            }
         }
         if (StringUtils.hasText(supplierCode)) {
             wrapper.eq(MaterialInspection::getSupplierCode, supplierCode);
@@ -131,6 +139,12 @@ public class MaterialInspectionController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false) String endDate) {
         return R.ok(materialInspectionService.supplierRank(startDate, endDate));
+    }
+
+    @GetMapping("/by-barcode")
+    @ApiOperation(value = "按物料条码查询检验详情")
+    public R<MaterialInspection> getByBarcode(@RequestParam String barcode) {
+        return R.ok(materialInspectionService.getByBarcode(barcode));
     }
 
     @GetMapping("/{id}")

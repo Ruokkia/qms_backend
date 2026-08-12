@@ -2,6 +2,9 @@ package com.kangli.qms.service.trace;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableFieldInfo;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.kangli.qms.common.LoginUser;
 import com.kangli.qms.common.LoginUserHolder;
 import com.kangli.qms.domain.finishedgoods.entity.FinishedGoodsInspection;
@@ -12,6 +15,7 @@ import com.kangli.qms.domain.incoming.mapper.CriticalMaterialBindingMapper;
 import com.kangli.qms.domain.incoming.mapper.MaterialInspectionMapper;
 import com.kangli.qms.enums.PlantCode;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,6 +26,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.session.Configuration;
 
 import java.util.Collections;
 import java.util.List;
@@ -51,6 +57,13 @@ import static org.mockito.Mockito.when;
 @DisplayName("M0 追溯服务：隔离与防环")
 class IncomingTraceServiceTest {
 
+    @BeforeAll
+    static void initBindingTableInfo() {
+        Configuration configuration = new MybatisConfiguration();
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(configuration, "trace-test");
+        TableInfoHelper.initTableInfo(assistant, CriticalMaterialBinding.class);
+    }
+
     @Mock
     private CriticalMaterialBindingMapper bindingMapper;
     @Mock
@@ -79,6 +92,14 @@ class IncomingTraceServiceTest {
         b.setMaterialBarcode(material);
         b.setPlantCode("SZ");
         return b;
+    }
+
+    @Test
+    @DisplayName("追溯绑定实体不映射已删除的工序列")
+    void bindingEntity_shouldNotMapRemovedProcessColumns() {
+        assertThat(TableInfoHelper.getTableInfo(CriticalMaterialBinding.class).getFieldList())
+                .extracting(TableFieldInfo::getColumn)
+                .doesNotContain("process_code", "process_name");
     }
 
     @Test
