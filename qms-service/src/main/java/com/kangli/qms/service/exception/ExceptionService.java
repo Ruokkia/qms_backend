@@ -17,6 +17,7 @@ import com.kangli.qms.domain.exception.vo.ExceptionDetailVO;
 import com.kangli.qms.domain.exception.vo.ExceptionStatsVO;
 import com.kangli.qms.domain.supplier.vo.SupplierExceptionSummaryVO;
 import com.kangli.qms.domain.exception.vo.QualityRuleCatalogVO;
+import com.kangli.qms.domain.exception.vo.ExceptionSourceOptionVO;
 import com.kangli.qms.domain.exception.vo.ExceptionUserOptionVO;
 
 import java.util.List;
@@ -37,6 +38,23 @@ public interface ExceptionService {
 
     /** 新增异常单 */
     ExceptionOrder create(ExceptionOrder order);
+
+    /**
+     * 异常单「选择源头记录」聚合查询。
+     * 按来源类型从不同源头库查询并统一返回精简 VO（id/物料编码/物料名称/批号/供应商/工单号）。
+     * <ul>
+     *   <li>sourceType=material（来料不良）：查已入库来料检验记录</li>
+     *   <li>sourceType=fai（首件不良）：查首件检验记录</li>
+     *   <li>sourceType=finished（成品不良）：查成品检验记录</li>
+     *   <li>sourceType=complaint/process/other（B组）：模糊搜索来料+成品记录（放宽物料编码搜索）</li>
+     * </ul>
+     *
+     * @param sourceType 来源类型（见上）
+     * @param keyword    模糊关键词（物料编码/物料名称/批号/供应商），可空
+     * @param page       页码（从1开始）
+     * @param size       每页条数（上限100）
+     */
+    PageResult<ExceptionSourceOptionVO> listSourceOptions(String sourceType, String keyword, int page, int size);
 
     /** 根据来料检验记录自动生成异常单 */
     ExceptionOrder createFromMaterialInspection(MaterialInspection inspection, LoginUser loginUser);

@@ -56,6 +56,7 @@ import com.kangli.qms.domain.exception.vo.EightDVO;
 import com.kangli.qms.domain.exception.vo.ExceptionAnalysisItemVO;
 import com.kangli.qms.domain.exception.vo.ExceptionAnalysisVO;
 import com.kangli.qms.domain.exception.vo.ExceptionDetailVO;
+import com.kangli.qms.domain.exception.vo.ExceptionSourceOptionVO;
 import com.kangli.qms.domain.exception.vo.ExceptionStatsVO;
 import com.kangli.qms.domain.supplier.vo.SupplierExceptionSummaryVO;
 import com.kangli.qms.domain.exception.vo.QualityExceptionDecisionVO;
@@ -71,6 +72,7 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -329,6 +331,22 @@ public class ExceptionServiceImpl implements ExceptionService {
         LoginUser loginUser = getCurrentLoginUser();
         String plantCode = loginUser.getPlantCode().name();
 
+        // ===== 按来源类型校验（字段差异化核心） =====
+        String sourceType = order.getSourceType();
+        if (sourceType == null || sourceType.isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "来源类型 sourceType 不能为空");
+        }
+        // A 组（来料/首件/成品）：必须选择源头记录，确保追溯链不断裂
+        if (isGroupA(sourceType) && order.getSourceId() == null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "来源类型为「来料/首件/成品」时必须选择源头记录");
+        }
+        // B 组客诉：客户名称必填
+        if ("客诉".equals(sourceType)) {
+            if (!StringUtils.hasText(order.getCustomerName())) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "客诉类异常单客户名称必填");
+            }
+        }
+
         order.setPlantCode(plantCode);
         order.setPlantName(loginUser.getPlantCode().getChineseName());
         order.setStatus("待整改");
@@ -341,6 +359,150 @@ public class ExceptionServiceImpl implements ExceptionService {
 
         insertExceptionWithRetry(order);
         return order;
+    }
+
+    /**
+     * 判断来源类型是否属于 A 组（来料/首件/成品）——必须选源头记录。
+     */
+    private boolean isGroupA(String sourceType) {
+        return "来料不良".equals(sourceType) || "首件不良".equals(sourceType) || "成品不良".equals(sourceType);
+    }
+
+    // ===== 异常单「选择源头记录」聚合查询 =====
+
+    @Override
+    public PageResult<ExceptionSourceOptionVO> listSourceOptions(String sourceType, String keyword, int page, int size) {
+        if (size > 100) {
+            size = 100;
+        }
+        if (page < 1) {
+            page = 1;
+        }
+        if (StringUtils.hasText(keyword)) {
+            keyword = keyword.trim();
+        } else {
+            keyword = null;
+        }
+
+        Page<ExceptionSourceOptionVO> resultPage;
+        if ("来料不良".equals(sourceType)) {
+            resultPage = queryMaterialOptions(page, size, keyword);
+        } else if ("首件不良".equals(sourceType)) {
+            resultPage = queryFaiOptions(page, size, keyword);
+        } else if ("成品不良".equals(sourceType)) {
+            resultPage = queryFinishedOptions(page, size, keyword);
+        } else {
+            // B 组（客诉/过程异常/其他）：模糊搜索来料 + 成品记录
+            resultPage = queryMixedOptions(page, size, keyword);
+        }
+        return PageResult.of(resultPage);
+    }
+
+    /** 来料源头：material_inspection（已入库，未删除） */
+    private Page<ExceptionSourceOptionVO> queryMaterialOptions(int page, int size, String keyword) {
+        Page<MaterialInspection> p = new Page<>(page, size);
+        LambdaQueryWrapper<MaterialInspection> w = new LambdaQueryWrapper<>();
+        if (keyword != null) {
+            w.and(q -> q.like(MaterialInspection::getMaterialCode, keyword)
+                    .or().like(MaterialInspection::getMaterialName, keyword)
+                    .or().like(MaterialInspection::getMaterialBatchNo, keyword)
+                    .or().like(MaterialInspection::getSupplierName, keyword));
+        }
+        materialInspectionMapper.selectPage(p, w);
+        Page<ExceptionSourceOptionVO> voPage = new Page<>(p.getCurrent(), p.getSize(), p.getTotal());
+        voPage.setRecords(p.getRecords().stream().map(this::toMaterialVo).collect(java.util.stream.Collectors.toList()));
+        return voPage;
+    }
+
+    /** 首件源头：fai_inspection_record */
+    private Page<ExceptionSourceOptionVO> queryFaiOptions(int page, int size, String keyword) {
+        Page<FaiInspectionRecord> p = new Page<>(page, size);
+        LambdaQueryWrapper<FaiInspectionRecord> w = new LambdaQueryWrapper<>();
+        if (keyword != null) {
+            w.and(q -> q.like(FaiInspectionRecord::getMaterialCode, keyword)
+                    .or().like(FaiInspectionRecord::getMaterialName, keyword)
+                    .or().like(FaiInspectionRecord::getBatchNo, keyword));
+        }
+        faiInspectionRecordMapper.selectPage(p, w);
+        Page<ExceptionSourceOptionVO> voPage = new Page<>(p.getCurrent(), p.getSize(), p.getTotal());
+        voPage.setRecords(p.getRecords().stream().map(this::toFaiVo).collect(java.util.stream.Collectors.toList()));
+        return voPage;
+    }
+
+    /** 成品源头：finished_goods_inspection */
+    private Page<ExceptionSourceOptionVO> queryFinishedOptions(int page, int size, String keyword) {
+        Page<FinishedGoodsInspection> p = new Page<>(page, size);
+        LambdaQueryWrapper<FinishedGoodsInspection> w = new LambdaQueryWrapper<>();
+        if (keyword != null) {
+            w.and(q -> q.like(FinishedGoodsInspection::getMaterialCode, keyword)
+                    .or().like(FinishedGoodsInspection::getProductName, keyword)
+                    .or().like(FinishedGoodsInspection::getProdBatchOrSn, keyword));
+        }
+        finishedGoodsInspectionMapper.selectPage(p, w);
+        Page<ExceptionSourceOptionVO> voPage = new Page<>(p.getCurrent(), p.getSize(), p.getTotal());
+        voPage.setRecords(p.getRecords().stream().map(this::toFinishedVo).collect(java.util.stream.Collectors.toList()));
+        return voPage;
+    }
+
+    /** B 组：来料 + 成品 合并模糊搜索（取前 size 条，分页近似合并） */
+    private Page<ExceptionSourceOptionVO> queryMixedOptions(int page, int size, String keyword) {
+        List<ExceptionSourceOptionVO> all = new java.util.ArrayList<>();
+        // 来料
+        LambdaQueryWrapper<MaterialInspection> wm = new LambdaQueryWrapper<>();
+        if (keyword != null) {
+            wm.and(q -> q.like(MaterialInspection::getMaterialCode, keyword)
+                    .or().like(MaterialInspection::getMaterialName, keyword)
+                    .or().like(MaterialInspection::getSupplierName, keyword));
+        }
+        materialInspectionMapper.selectList(wm).forEach(e -> all.add(toMaterialVo(e)));
+        // 成品
+        LambdaQueryWrapper<FinishedGoodsInspection> wf = new LambdaQueryWrapper<>();
+        if (keyword != null) {
+            wf.and(q -> q.like(FinishedGoodsInspection::getMaterialCode, keyword)
+                    .or().like(FinishedGoodsInspection::getProductName, keyword));
+        }
+        finishedGoodsInspectionMapper.selectList(wf).forEach(e -> all.add(toFinishedVo(e)));
+
+        int total = all.size();
+        int from = Math.min((page - 1) * size, total);
+        int to = Math.min(from + size, total);
+        List<ExceptionSourceOptionVO> slice = from >= total ? java.util.Collections.emptyList() : all.subList(from, to);
+        Page<ExceptionSourceOptionVO> voPage = new Page<>(page, size, total);
+        voPage.setRecords(slice);
+        return voPage;
+    }
+
+    private ExceptionSourceOptionVO toMaterialVo(MaterialInspection e) {
+        ExceptionSourceOptionVO vo = new ExceptionSourceOptionVO();
+        vo.setId(e.getId());
+        vo.setSourceType("material");
+        vo.setMaterialCode(e.getMaterialCode());
+        vo.setMaterialName(e.getMaterialName());
+        vo.setBatchNo(e.getMaterialBatchNo());
+        vo.setSupplierName(e.getSupplierName());
+        return vo;
+    }
+
+    private ExceptionSourceOptionVO toFaiVo(FaiInspectionRecord e) {
+        ExceptionSourceOptionVO vo = new ExceptionSourceOptionVO();
+        vo.setId(e.getId());
+        vo.setSourceType("fai");
+        vo.setMaterialCode(e.getMaterialCode());
+        vo.setMaterialName(e.getMaterialName());
+        vo.setBatchNo(e.getBatchNo());
+        vo.setWorkOrderNo(e.getWorkOrderNo());
+        return vo;
+    }
+
+    private ExceptionSourceOptionVO toFinishedVo(FinishedGoodsInspection e) {
+        ExceptionSourceOptionVO vo = new ExceptionSourceOptionVO();
+        vo.setId(e.getId());
+        vo.setSourceType("finished");
+        vo.setMaterialCode(e.getMaterialCode());
+        vo.setMaterialName(e.getProductName());
+        vo.setBatchNo(e.getProdBatchOrSn());
+        vo.setWorkOrderNo(e.getProductionOrderNo());
+        return vo;
     }
 
     // ===== 根据来料检验记录自动生成异常单 =====

@@ -108,6 +108,24 @@ public class ExceptionOrder implements Serializable {
     /** 来源来料记录的处理方式 */
     private String handlingMethod;
 
+    // ---- 客诉 / 过程异常 专属扩展字段（V20260811152934793 迁移新增，可空） ----
+
+    /** 客诉：客户名称（来源类型为「客户投诉」时必填） */
+    @TableField("customer_name")
+    private String customerName;
+
+    /** 客诉：客诉单号 */
+    @TableField("complaint_no")
+    private String complaintNo;
+
+    /** 过程异常：工序（下拉选固化工序库，冗余存储名称） */
+    @TableField("process_step")
+    private String processStep;
+
+    /** 过程异常：产线 */
+    @TableField("production_line")
+    private String productionLine;
+
     /** 闭环时间 */
     private LocalDateTime closedAt;
 

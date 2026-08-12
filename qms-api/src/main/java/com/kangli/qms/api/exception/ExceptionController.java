@@ -20,6 +20,7 @@ import com.kangli.qms.domain.exception.vo.EightDStepLogVO;
 import com.kangli.qms.domain.exception.vo.EightDVO;
 import com.kangli.qms.domain.exception.vo.ExceptionAnalysisVO;
 import com.kangli.qms.domain.exception.vo.ExceptionDetailVO;
+import com.kangli.qms.domain.exception.vo.ExceptionSourceOptionVO;
 import com.kangli.qms.domain.exception.vo.ExceptionStatsVO;
 import com.kangli.qms.domain.exception.vo.ExceptionUserOptionVO;
 import com.kangli.qms.domain.exception.vo.QualityRuleCatalogVO;
@@ -165,6 +166,20 @@ public class ExceptionController {
     public R<Long> findBySourceId(@PathVariable Long sourceId) {
         Long exceptionId = exceptionService.findExceptionBySourceId(sourceId);
         return R.ok(exceptionId);
+    }
+
+    @GetMapping("/source-options")
+    @ApiOperation(value = "异常单「选择源头记录」聚合查询",
+            notes = "按来源类型从不同源头库查询并统一返回精简字段（id/物料编码/物料名称/批号/供应商/工单号），供新建异常单表单选择。" +
+                    "sourceType=material 查来料库、fai 查首件库、finished 查成品库；complaint/process/other 模糊搜索来料+成品库。")
+    public R<PageResult<ExceptionSourceOptionVO>> sourceOptions(
+            @ApiParam(value = "来源类型：material/fai/finished/complaint/process/other", required = true)
+            @RequestParam String sourceType,
+            @ApiParam(value = "模糊关键词（物料编码/名称/批号/供应商），可选")
+            @RequestParam(required = false) String keyword,
+            @ApiParam(value = "页码，从1开始") @RequestParam(defaultValue = "1") int page,
+            @ApiParam(value = "每页条数，上限100") @RequestParam(defaultValue = "20") int size) {
+        return R.ok(exceptionService.listSourceOptions(sourceType, keyword, page, size));
     }
 
     @PostMapping("/from-inspection/{inspectionId}")
