@@ -17,6 +17,8 @@ import com.kangli.qms.domain.spc.mapper.SpcControlLimitMapper;
 import com.kangli.qms.domain.spc.mapper.SpcParameterMapper;
 import com.kangli.qms.domain.spc.mapper.SpcSampleMapper;
 import com.kangli.qms.domain.spc.mapper.SpcSubgroupMapper;
+import com.kangli.qms.domain.fai.entity.FaiInspectionStandardItem;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardItemMapper;
 import com.kangli.qms.service.spc.SpcParameterService;
 import com.kangli.qms.service.fai.FaiInspectionService;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -39,19 +42,22 @@ public class SpcParameterServiceImpl implements SpcParameterService {
     private final SpcSampleMapper sampleMapper;
     private final SpcControlLimitMapper controlLimitMapper;
     private final SpcCapabilityMapper capabilityMapper;
+    private final FaiInspectionStandardItemMapper standardItemMapper;
 
     public SpcParameterServiceImpl(SpcParameterMapper parameterMapper,
                                    FaiInspectionService faiInspectionService,
                                    SpcSubgroupMapper subgroupMapper,
                                    SpcSampleMapper sampleMapper,
                                    SpcControlLimitMapper controlLimitMapper,
-                                   SpcCapabilityMapper capabilityMapper) {
+                                   SpcCapabilityMapper capabilityMapper,
+                                   FaiInspectionStandardItemMapper standardItemMapper) {
         this.parameterMapper = parameterMapper;
         this.faiInspectionService = faiInspectionService;
         this.subgroupMapper = subgroupMapper;
         this.sampleMapper = sampleMapper;
         this.controlLimitMapper = controlLimitMapper;
         this.capabilityMapper = capabilityMapper;
+        this.standardItemMapper = standardItemMapper;
     }
 
     @Override
@@ -61,7 +67,31 @@ public class SpcParameterServiceImpl implements SpcParameterService {
                 .eq(SpcParameter::getIsDeleted, 0)
                 .eq(processId != null, SpcParameter::getProcessId, processId)
                 .orderByAsc(SpcParameter::getId);
-        return parameterMapper.selectList(qw).stream().map(this::toResponse).collect(Collectors.toList());
+        List<SpcParameter> params = parameterMapper.selectList(qw);
+        if (params.isEmpty()) {
+            return List.of();
+        }
+        // 批量统计各参数下的子组数量（一次查询，按 paramId 分组计数）
+        List<Long> paramIds = params.stream().map(SpcParameter::getId).collect(Collectors.toList());
+        Map<Long, Long> subgroupCounts = subgroupMapper.selectList(
+                Wrappers.lambdaQuery(SpcSubgroup.class)
+                        .in(SpcSubgroup::getParamId, paramIds)
+                        .eq(SpcSubgroup::getIsDeleted, 0)
+                        .select(SpcSubgroup::getParamId)
+        ).stream().collect(Collectors.groupingBy(SpcSubgroup::getParamId, Collectors.counting()));
+        // 批量统计各参数被 FAI 检验标准引用的次数（一次查询，按 spcParameterId 分组计数）
+        Map<Long, Long> faiRefCounts = standardItemMapper.selectList(
+                Wrappers.lambdaQuery(FaiInspectionStandardItem.class)
+                        .in(FaiInspectionStandardItem::getSpcParameterId, paramIds)
+                        .eq(FaiInspectionStandardItem::getIsDeleted, 0)
+                        .select(FaiInspectionStandardItem::getSpcParameterId)
+        ).stream().collect(Collectors.groupingBy(FaiInspectionStandardItem::getSpcParameterId, Collectors.counting()));
+        return params.stream().map(p -> {
+            SpcParameterResponse r = toResponse(p);
+            r.setSubgroupCount(subgroupCounts.getOrDefault(p.getId(), 0L));
+            r.setFaiReferenceCount(faiRefCounts.getOrDefault(p.getId(), 0L));
+            return r;
+        }).collect(Collectors.toList());
     }
 
     @Override
@@ -141,8 +171,28 @@ public class SpcParameterServiceImpl implements SpcParameterService {
         if (current == null || current.getIsDeleted() == 1) {
             throw new BusinessException(ResultCode.NOT_FOUND, "参数不存在");
         }
-        // 先清理该参数下的子表数据，避免子表残留孤节点
+
+        // Guard 1: 子组数据检查 — 存在子组数据时拒绝删除
+        long subgroupCount = subgroupMapper.selectCount(
+                Wrappers.lambdaQuery(SpcSubgroup.class)
+                        .eq(SpcSubgroup::getParamId, id)
+                        .eq(SpcSubgroup::getIsDeleted, 0));
+        if (subgroupCount > 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "该参数下存在子组数据，无法删除");
+        }
+
+        // Guard 2: FAI 检验标准引用检查 — 被检验标准引用时拒绝删除
+        long refCount = standardItemMapper.selectCount(
+                Wrappers.lambdaQuery(FaiInspectionStandardItem.class)
+                        .eq(FaiInspectionStandardItem::getSpcParameterId, id)
+                        .eq(FaiInspectionStandardItem::getIsDeleted, 0));
+        if (refCount > 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "该参数已被检验标准引用，请先解除关联");
+        }
+
+        // 级联删除子组、样本、控制限和能力数据
         cascadeDeleteByParam(id);
+
         parameterMapper.deleteById(id);
     }
 

@@ -19,12 +19,17 @@ import com.kangli.qms.domain.spc.mapper.SpcParameterMapper;
 import com.kangli.qms.domain.spc.mapper.SpcProcessMapper;
 import com.kangli.qms.domain.spc.mapper.SpcSampleMapper;
 import com.kangli.qms.domain.spc.mapper.SpcSubgroupMapper;
+import com.kangli.qms.domain.fai.entity.FaiInspectionStandard;
+import com.kangli.qms.domain.fai.entity.FaiInspectionStandardItem;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardItemMapper;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardMapper;
 import com.kangli.qms.service.spc.SpcProcessService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -46,18 +51,26 @@ public class SpcProcessServiceImpl implements SpcProcessService {
 
     private final SpcCapabilityMapper capabilityMapper;
 
+    private final FaiInspectionStandardItemMapper standardItemMapper;
+
+    private final FaiInspectionStandardMapper standardMapper;
+
     public SpcProcessServiceImpl(SpcProcessMapper processMapper,
                                  SpcParameterMapper parameterMapper,
                                  SpcSubgroupMapper subgroupMapper,
                                  SpcSampleMapper sampleMapper,
                                  SpcControlLimitMapper controlLimitMapper,
-                                 SpcCapabilityMapper capabilityMapper) {
+                                 SpcCapabilityMapper capabilityMapper,
+                                 FaiInspectionStandardItemMapper standardItemMapper,
+                                 FaiInspectionStandardMapper standardMapper) {
         this.processMapper = processMapper;
         this.parameterMapper = parameterMapper;
         this.subgroupMapper = subgroupMapper;
         this.sampleMapper = sampleMapper;
         this.controlLimitMapper = controlLimitMapper;
         this.capabilityMapper = capabilityMapper;
+        this.standardItemMapper = standardItemMapper;
+        this.standardMapper = standardMapper;
     }
 
     @Override
@@ -68,7 +81,34 @@ public class SpcProcessServiceImpl implements SpcProcessService {
                 // 种子数据(sort_order>0)保持原顺序置顶，用户新增数据(sort_order=0)按创建时间正序排在种子之后
                 .last("ORDER BY CASE WHEN sort_order > 0 THEN 0 ELSE 1 END ASC, "
                         + "CASE WHEN sort_order > 0 THEN sort_order END ASC, created_at ASC");
-        return processMapper.selectList(qw).stream().map(this::toResponse).collect(Collectors.toList());
+        List<SpcProcess> processes = processMapper.selectList(qw);
+        // 一次分组聚合：该厂区每个工序编码关联到的 FAI 检验标准数（is_deleted=0），用于前端删除守卫
+        Map<String, Long> linkedStandardByCode = countLinkedStandardByPlant(plantCode);
+        return processes.stream()
+                .map(e -> toResponse(e, linkedStandardByCode.getOrDefault(e.getProcessCode(), 0L)))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 按厂区批量统计每个 process_code 关联到的 FAI 检验标准数（is_deleted=0）。
+     * 返回 Map：processCode -> 关联标准数，避免 N+1。
+     *
+     * @param plantCode 厂区编码
+     */
+    private Map<String, Long> countLinkedStandardByPlant(String plantCode) {
+        List<FaiInspectionStandard> standards = standardMapper.selectList(
+                Wrappers.lambdaQuery(FaiInspectionStandard.class)
+                        .eq(FaiInspectionStandard::getPlantCode, plantCode)
+                        .eq(FaiInspectionStandard::getIsDeleted, 0)
+                        .select(FaiInspectionStandard::getProcessCode));
+        Map<String, Long> result = new java.util.HashMap<>();
+        for (FaiInspectionStandard s : standards) {
+            String code = s.getProcessCode();
+            if (code != null) {
+                result.merge(code, 1L, Long::sum);
+            }
+        }
+        return result;
     }
 
     @Override
@@ -93,7 +133,7 @@ public class SpcProcessServiceImpl implements SpcProcessService {
         entity.setCreatedBy(loginUser.getAccount());
         entity.setUpdatedBy(loginUser.getAccount());
         processMapper.insert(entity);
-        return toResponse(entity);
+        return toResponse(entity, 0L);
     }
 
     /**
@@ -159,7 +199,12 @@ public class SpcProcessServiceImpl implements SpcProcessService {
         }
         // refetch 同步 @Version：updateById 后 DB version 已 +1，内存对象 version 已过时
         current = processMapper.selectById(current.getId());
-        return toResponse(current);
+        long linkedCount = standardMapper.selectCount(
+                Wrappers.lambdaQuery(FaiInspectionStandard.class)
+                        .eq(FaiInspectionStandard::getProcessCode, current.getProcessCode())
+                        .eq(FaiInspectionStandard::getPlantCode, current.getPlantCode())
+                        .eq(FaiInspectionStandard::getIsDeleted, 0));
+        return toResponse(current, linkedCount);
     }
 
     @Override
@@ -169,13 +214,42 @@ public class SpcProcessServiceImpl implements SpcProcessService {
         if (current == null || current.getIsDeleted() == 1) {
             throw new BusinessException(ResultCode.NOT_FOUND, "工序不存在");
         }
-        // 收集该工序下所有未删除的关键参数，先逐个清理其子树，避免子表残留孤节点
+        // Guard 3: FAI 检验标准关联检查 — 该工序按 processCode+plantCode 关联到任意检验标准时拒绝删除
+        long linkedStandardCount = standardMapper.selectCount(
+                Wrappers.lambdaQuery(FaiInspectionStandard.class)
+                        .eq(FaiInspectionStandard::getProcessCode, current.getProcessCode())
+                        .eq(FaiInspectionStandard::getPlantCode, current.getPlantCode())
+                        .eq(FaiInspectionStandard::getIsDeleted, 0));
+        if (linkedStandardCount > 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "该工序已关联检验标准，无法删除");
+        }
+        // 收集该工序下所有未删除的关键参数
         List<Long> paramIds = parameterMapper.selectList(
                         Wrappers.lambdaQuery(SpcParameter.class)
                                 .eq(SpcParameter::getProcessId, id)
                                 .eq(SpcParameter::getIsDeleted, 0)
                                 .select(SpcParameter::getId))
                 .stream().map(SpcParameter::getId).collect(Collectors.toList());
+
+        if (!paramIds.isEmpty()) {
+            // Guard 1: 子组数据检查 — 任一参数下存在子组数据时拒绝删除
+            long subgroupCount = subgroupMapper.selectCount(
+                    Wrappers.lambdaQuery(SpcSubgroup.class)
+                            .in(SpcSubgroup::getParamId, paramIds)
+                            .eq(SpcSubgroup::getIsDeleted, 0));
+            if (subgroupCount > 0) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "该工序下存在子组数据，无法删除");
+            }
+
+            // Guard 2: FAI 检验标准引用检查 — 任一参数被检验标准引用时拒绝删除
+            long refCount = standardItemMapper.selectCount(
+                    Wrappers.lambdaQuery(FaiInspectionStandardItem.class)
+                            .in(FaiInspectionStandardItem::getSpcParameterId, paramIds)
+                            .eq(FaiInspectionStandardItem::getIsDeleted, 0));
+            if (refCount > 0) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "该工序下的参数已被检验标准引用，请先解除关联");
+            }
+        }
 
         for (Long paramId : paramIds) {
             cascadeDeleteByParam(paramId);
@@ -214,7 +288,7 @@ public class SpcProcessServiceImpl implements SpcProcessService {
                 .eq(SpcCapability::getParamId, paramId));
     }
 
-    private SpcProcessResponse toResponse(SpcProcess e) {
+    private SpcProcessResponse toResponse(SpcProcess e, Long linkedStandardCount) {
         SpcProcessResponse r = new SpcProcessResponse();
         r.setId(e.getId());
         r.setProcessCode(e.getProcessCode());
@@ -225,6 +299,7 @@ public class SpcProcessServiceImpl implements SpcProcessService {
         r.setPlantName(e.getPlantName());
         r.setIsActive(e.getIsActive());
         r.setChangeRemark(e.getChangeRemark());
+        r.setLinkedStandardCount(linkedStandardCount);
         return r;
     }
 }

@@ -164,6 +164,51 @@ class SpcRegressionIntegrationTest extends BaseIntegrationTest {
     }
 
     /**
+     * B2 / M4-033（P0 SPC 超时回归）：批量造数（20 参数 × 各带完成子组）放大潜在 N+1 风险，
+     * 断言 GET /api/v1/spc/parameters 响应耗时 < 1000ms 且返回数据正确（守护去 N+1 优化不回归）。
+     */
+    @Test
+    void m4_033_timeout_under1000ms_b2() throws Exception {
+        String token = login("sz_mgr01", "123456");
+        long procId = createProcess(token);
+
+        // 批量造 20 个参数（每个修库列以走通正常 recalc 路径），放大列表查询的 N+1 风险
+        int paramCount = 20;
+        for (int i = 0; i < paramCount; i++) {
+            long paramId = createParam(token, procId, "PMB2" + i + "_" + System.currentTimeMillis());
+            jdbcTemplate.update(
+                    "UPDATE qms.spc_parameter SET subgroup_size=5, chart_type='Xbar-R' WHERE id=?", paramId);
+            // 每个参数提交 2 个完成子组（count>=2 触发 recalc，增加聚合查询负担）
+            for (int k = 1; k <= 2; k++) {
+                mvc.perform(post("/api/v1/spc/subgroups")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType("application/json")
+                                .content("{\"paramId\":" + paramId + ",\"sampleValues\":[10.0,10.1,10.2,10.3,10.4],"
+                                        + "\"itemType\":\"PRODUCT\",\"itemCode\":\"PCB2" + i + "\",\"batchNo\":\"BB2" + i + "\","
+                                        + "\"barcode\":\"BCB2" + i + "_" + k + "\",\"materialName\":\"物料\"}"))
+                        .andExpect(status().isOk());
+            }
+        }
+
+        long start = System.currentTimeMillis();
+        MvcResult result = mvc.perform(get("/api/v1/spc/parameters?processId=" + procId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.length()").value(paramCount))
+                .andReturn();
+        long elapsed = System.currentTimeMillis() - start;
+        org.slf4j.LoggerFactory.getLogger(SpcRegressionIntegrationTest.class)
+                .info("[B2/M4-033] GET /parameters?processId={} 批量20参数 耗时 {}ms", procId, elapsed);
+
+        org.junit.jupiter.api.Assertions.assertTrue(elapsed < 1000,
+                "GET /api/v1/spc/parameters 耗时 " + elapsed + "ms 超过 1000ms 阈值（B2 SPC 超时回归失败）");
+        // 列表元素为 SpcParameterResponse（不含裸实体审计列，D6 红线守护）
+        String body = result.getResponse().getContentAsString();
+        JsonPath.read(body, "$.data[0].paramCode");
+    }
+
+    /**
      * M4-035（工序编辑返回）：PUT /processes/{id} 修改 sortOrder 后，返回体中 sortOrder 为更新值。
      * 注：SpcProcessResponse 不回传 version（乐观锁字段，库内自动递增），故仅断言 sortOrder。
      * processCode 为更新校验必填字段（validateProcess）。

@@ -14,6 +14,7 @@ import com.kangli.qms.domain.fai.entity.FaiInspectionItem;
 import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandard;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandardItem;
+import com.kangli.qms.service.fai.dto.FaiStandardResponse;
 import com.kangli.qms.domain.spc.entity.SpcParameter;
 import com.kangli.qms.domain.spc.entity.SpcProcess;
 import com.kangli.qms.domain.spc.entity.SpcSample;
@@ -33,6 +34,7 @@ import com.kangli.qms.domain.spc.mapper.SpcSubgroupMapper;
 import com.kangli.qms.service.spc.SpcCapabilityService;
 import com.kangli.qms.service.spc.SpcChartService;
 import com.kangli.qms.service.spc.SpcSubgroupService;
+import com.kangli.qms.service.fai.FaiStandardService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +49,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -79,6 +82,7 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
     private final FinishedGoodsInspectionMapper fgMapper;
     private final SpcChartService chartService;
     private final SpcCapabilityService capabilityService;
+    private final FaiStandardService faiStandardService;
 
     public SpcSubgroupServiceImpl(ObjectMapper objectMapper,
                                  SpcSubgroupMapper subgroupMapper,
@@ -92,7 +96,8 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
                                  MaterialInspectionMapper matMapper,
                                  FinishedGoodsInspectionMapper fgMapper,
                                  SpcChartService chartService,
-                                 SpcCapabilityService capabilityService) {
+                                 SpcCapabilityService capabilityService,
+                                 FaiStandardService faiStandardService) {
         this.objectMapper = objectMapper;
         this.subgroupMapper = subgroupMapper;
         this.sampleMapper = sampleMapper;
@@ -106,6 +111,7 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         this.fgMapper = fgMapper;
         this.chartService = chartService;
         this.capabilityService = capabilityService;
+        this.faiStandardService = faiStandardService;
     }
 
     @Override
@@ -127,8 +133,11 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         if (dto.getBarcode() == null || dto.getBarcode().trim().isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "条码不能为空");
         }
-        return saveInternal(param, values, "手动录入", null, null,
+        SpcSubgroupResponse result = saveInternal(param, values, "手动录入", null, null,
                 dto.getItemType(), dto.getItemCode(), dto.getBatchNo(), dto.getBarcode(), dto.getMaterialName(), loginUser);
+        // 手动录入子组后，用条码反查 FAI 记录并标记标准为已使用
+        markStandardUsedByBarcode(dto.getBarcode(), loginUser.getPlantCode().name());
+        return result;
     }
 
     @Override
@@ -246,13 +255,21 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         sub.setTargetValue(param.getTargetValue());
         sub.setUpperSpecLimit(param.getUpperSpecLimit());
         sub.setLowerSpecLimit(param.getLowerSpecLimit());
-        sub.setStandardVersion(resolveStandardVersion(fai));
+        // 版本隔离：首件导入沿用记录追溯链版本；手动录入从当前激活标准取版本，消除"版本孤岛"
+        sub.setStandardVersion(fai != null
+                ? resolveStandardVersion(fai)
+                : resolveActiveStandardVersion(param, itemType, itemCode, plantCode));
         sub.setSubgroupStatus(values.size() == param.getSubgroupSize() ? "已完成" : "待补样本");
         sub.setPlantCode(plantCode);
         sub.setPlantName(loginUser.getPlantCode().getChineseName());
         sub.setCreatedBy(loginUser.getAccount());
         sub.setUpdatedBy(loginUser.getAccount());
         subgroupMapper.insert(sub);
+
+        // 标记标准为已使用（usageStatus=1 表示已被引用），仅首次引用时标记（幂等）
+        if (faiRecordId != null) {
+            markStandardUsed(faiRecordId);
+        }
 
         List<SpcSample> samples = new ArrayList<>();
         for (int i = 0; i < values.size(); i++) {
@@ -561,6 +578,71 @@ public class SpcSubgroupServiceImpl implements SpcSubgroupService {
         if (standardItem == null) return null;
         FaiInspectionStandard standard = faiStandardMapper.selectById(standardItem.getStandardId());
         return standard == null ? null : standard.getStdVersion();
+    }
+
+    /**
+     * 手动录入子组解析标准版本：从当前激活标准（按 分类+代码+工序）取版本号写入 standard_version，
+     * 使手动录入数据同样纳入版本隔离体系，消除"版本孤岛"。
+     * 若对应 代码+工序 尚未建立激活标准，返回 null（与历史行为一致，不报错）。
+     */
+    private Integer resolveActiveStandardVersion(SpcParameter param, String itemType, String itemCode, String plantCode) {
+        if (param == null || !StringUtils.hasText(itemCode)) {
+            return null;
+        }
+        String processName = null;
+        if (param.getProcessId() != null) {
+            SpcProcess process = processMapper.selectById(param.getProcessId());
+            processName = process != null ? process.getProcessName() : null;
+        }
+        if (!StringUtils.hasText(processName)) {
+            return null;
+        }
+        FaiStandardResponse active = faiStandardService.latestActive(itemCode, itemType, processName, plantCode);
+        return active != null ? active.getStdVersion() : null;
+    }
+
+    /**
+     * 标记标准为已使用（usageStatus=1 表示已被引用），仅首次引用时标记（幂等）。
+     * 通过 faiRecordId → 检验项 → 标准项 → 标准ID 追溯链路去重后条件更新。
+     */
+    private void markStandardUsed(Long faiRecordId) {
+        List<FaiInspectionItem> items = faiItemMapper.selectList(
+            Wrappers.lambdaQuery(FaiInspectionItem.class)
+                .eq(FaiInspectionItem::getFaiRecordId, faiRecordId)
+                .isNotNull(FaiInspectionItem::getStandardItemId)
+                .eq(FaiInspectionItem::getIsDeleted, 0));
+        if (items.isEmpty()) return;
+        Set<Long> standardIds = new HashSet<>();
+        for (FaiInspectionItem item : items) {
+            FaiInspectionStandardItem stdItem = faiStandardItemMapper.selectById(item.getStandardItemId());
+            if (stdItem != null && stdItem.getIsDeleted() == 0) {
+                standardIds.add(stdItem.getStandardId());
+            }
+        }
+        for (Long standardId : standardIds) {
+            int rows = faiStandardMapper.update(null,
+                Wrappers.lambdaUpdate(FaiInspectionStandard.class)
+                    .set(FaiInspectionStandard::getUsageStatus, 1)
+                    .set(FaiInspectionStandard::getLastUsedAt, LocalDateTime.now())
+                    .eq(FaiInspectionStandard::getId, standardId));
+            log.info("标记标准已使用 standardId={} faiRecordId={} rows={}", standardId, faiRecordId, rows);
+        }
+    }
+
+    /**
+     * 通过条码反查 FAI 检验记录，标记关联标准为已使用。
+     * 用于手动录入子组的路径（此时 faiRecordId 为空，需反查）。
+     */
+    private void markStandardUsedByBarcode(String barcode, String plantCode) {
+        if (barcode == null || barcode.trim().isEmpty()) return;
+        List<FaiInspectionRecord> records = faiRecordMapper.selectList(
+            Wrappers.lambdaQuery(FaiInspectionRecord.class)
+                .eq(FaiInspectionRecord::getItemBarcode, barcode)
+                .eq(FaiInspectionRecord::getPlantCode, plantCode)
+                .eq(FaiInspectionRecord::getIsDeleted, 0));
+        for (FaiInspectionRecord record : records) {
+            markStandardUsed(record.getId());
+        }
     }
 
     private String genSubgroupNo(SpcParameter param, String plantCode) {

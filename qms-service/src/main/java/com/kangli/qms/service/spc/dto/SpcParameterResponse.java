@@ -29,4 +29,8 @@ public class SpcParameterResponse implements Serializable {
     private String changeRemark;
     private String plantCode;
     private String plantName;
+    /** 该参数下已录入的子组数量（用于前端删除守卫：>0 则不可删） */
+    private Long subgroupCount;
+    /** 该参数被 FAI 检验标准引用的次数（用于前端删除守卫：>0 则不可删） */
+    private Long faiReferenceCount;
 }

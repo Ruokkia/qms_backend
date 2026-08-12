@@ -21,4 +21,7 @@ public class SpcProcessResponse implements Serializable {
     private String plantName;
     private String isActive;
     private String changeRemark;
+
+    /** 该工序按 processCode+plantCode 关联到的 FAI 检验标准数（is_deleted=0）；>0 则工序不可删 */
+    private Long linkedStandardCount;
 }
