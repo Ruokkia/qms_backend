@@ -45,10 +45,9 @@ public class CriticalMaterialBindingController {
     public R<PageResult<CriticalMaterialBindingResponse>> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) String workOrderNo,
-            @RequestParam(required = false) String productBarcode,
-            @RequestParam(required = false) String materialCode,
-            @RequestParam(required = false) String processCode) {
+      @RequestParam(required = false) String workOrderNo,
+      @RequestParam(required = false) String productBarcode,
+      @RequestParam(required = false) String materialCode) {
         LoginUser loginUser = getCurrentLoginUser();
         Page<CriticalMaterialBinding> pageObj = new Page<>(page, size);
         LambdaQueryWrapper<CriticalMaterialBinding> wrapper = new LambdaQueryWrapper<>();
@@ -61,9 +60,6 @@ public class CriticalMaterialBindingController {
         }
         if (StringUtils.hasText(materialCode)) {
             wrapper.eq(CriticalMaterialBinding::getMaterialCode, materialCode);
-        }
-        if (StringUtils.hasText(processCode)) {
-            wrapper.eq(CriticalMaterialBinding::getProcessCode, processCode);
         }
         wrapper.orderByDesc(CriticalMaterialBinding::getScanTime);
         return R.ok(bindingService.page(pageObj, wrapper));
