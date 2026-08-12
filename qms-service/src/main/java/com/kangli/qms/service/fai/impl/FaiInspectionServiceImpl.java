@@ -1,6 +1,7 @@
 package com.kangli.qms.service.fai.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kangli.qms.common.BusinessException;
 import com.kangli.qms.common.LoginUser;
@@ -17,6 +18,7 @@ import com.kangli.qms.service.fai.dto.FaiStandardResponse;
 import com.kangli.qms.domain.fai.entity.FaiChangeTrigger;
 import com.kangli.qms.domain.fai.entity.FaiInspectionItem;
 import com.kangli.qms.domain.fai.entity.FaiInspectionRecord;
+import com.kangli.qms.domain.fai.entity.FaiInspectionStandard;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandardItem;
 import com.kangli.qms.domain.fai.entity.FaiSignature;
 import com.kangli.qms.domain.spc.entity.SpcParameter;
@@ -152,6 +154,8 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
             } catch (Exception e) {
                 log.warn("序列化标准快照失败 triggerId={}", changeTriggerId, e);
             }
+            // 固化建单时引用的标准版本号，实现版本隔离（刷新标准/对比按此版本，不受后续新建版本影响）
+            record.setStdVersion(standard.getStdVersion());
         }
 
         recordMapper.insert(record);
@@ -184,6 +188,14 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
             for (FaiInspectionItem item : items) {
                 itemMapper.insert(item);
             }
+
+            // 标记标准为已使用（usageStatus=1 表示已被引用）
+            int rows = standardMapper.update(null,
+                new LambdaUpdateWrapper<FaiInspectionStandard>()
+                    .set(FaiInspectionStandard::getUsageStatus, 1)
+                    .set(FaiInspectionStandard::getLastUsedAt, LocalDateTime.now())
+                    .eq(FaiInspectionStandard::getId, standard.getId()));
+            log.info("标记标准已使用 standardId={} triggerId={} rows={}", standard.getId(), changeTriggerId, rows);
         }
 
         // 变更触发状态推进为「已检验」（不关闭）
@@ -503,8 +515,9 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
                 trigger.setUpdatedBy(loginUser.getRealName());
                 changeTriggerMapper.updateById(trigger);
             }
-            // L30：首件不合格自动建异常整改单（去重由 createFromFai 保证）
-            exceptionService.createFromFai(record, loginUser);
+            // 异常单改为由 ExceptionAutoTriggerScheduler 定时轮询扫描库内不合格记录自动创建，
+            // 不再在接口线程内同步派生（去重由 createFromFai 保证，调度器重复扫描不会建重单）。
+            log.info("首件检验记录 {} 存在不合格项，将由定时调度自动创建异常单", record.getId());
         }
     }
 
@@ -554,7 +567,7 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
     private Map<String, String> buildRequiredMap(FaiInspectionRecord record) {
         Map<String, String> map = new java.util.HashMap<>();
         FaiStandardResponse standard =
-                standardService.latestActive(record.getMaterialCode(), record.getProcessName(), record.getPlantCode());
+                standardService.latestActive(record.getItemCode(), record.getItemType(), record.getProcessName(), record.getStdVersion(), record.getPlantCode());
         if (standard != null && standard.getItems() != null) {
             for (FaiInspectionStandardItem it : standard.getItems()) {
                 map.put(it.getParamCode() == null ? "" : it.getParamCode(), it.getIsRequired());
@@ -710,7 +723,7 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
     private Map<String, FaiInspectionStandardItem> buildStandardItemMap(FaiInspectionRecord record) {
         Map<String, FaiInspectionStandardItem> map = new java.util.HashMap<>();
         FaiStandardResponse standard =
-                standardService.latestActive(record.getMaterialCode(), record.getProcessName(), record.getPlantCode());
+                standardService.latestActive(record.getItemCode(), record.getItemType(), record.getProcessName(), record.getStdVersion(), record.getPlantCode());
         if (standard != null && standard.getItems() != null) {
             for (FaiInspectionStandardItem it : standard.getItems()) {
                 map.put(it.getParamCode() == null ? "" : it.getParamCode(), it);

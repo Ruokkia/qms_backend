@@ -2,6 +2,7 @@ package com.kangli.qms.service.fai.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.kangli.qms.common.BusinessException;
@@ -14,6 +15,7 @@ import com.kangli.qms.service.fai.dto.FaiStandardItemRequest;
 import com.kangli.qms.service.fai.dto.FaiStandardHistoryResponse;
 import com.kangli.qms.service.fai.dto.FaiStandardApprovalResponse;
 import com.kangli.qms.service.fai.dto.FaiStandardSpcParamVO;
+import com.kangli.qms.domain.fai.entity.FaiInspectionItem;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandard;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandardItem;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandardHistory;
@@ -21,6 +23,7 @@ import com.kangli.qms.domain.fai.entity.FaiStandardApproval;
 import com.kangli.qms.domain.spc.entity.SpcParameter;
 import com.kangli.qms.domain.spc.entity.SpcProcess;
 import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardItemMapper;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionItemMapper;
 import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardMapper;
 import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardHistoryMapper;
 import com.kangli.qms.domain.fai.mapper.FaiStandardApprovalMapper;
@@ -50,6 +53,7 @@ public class FaiStandardServiceImpl implements FaiStandardService {
     private final FaiStandardApprovalMapper approvalMapper;
     private final SpcParameterMapper spcParameterMapper;
     private final SpcProcessMapper spcProcessMapper;
+    private final FaiInspectionItemMapper faiItemMapper;
     private final ObjectMapper objectMapper;
 
     public FaiStandardServiceImpl(FaiInspectionStandardMapper standardMapper,
@@ -57,13 +61,15 @@ public class FaiStandardServiceImpl implements FaiStandardService {
                                   FaiInspectionStandardHistoryMapper historyMapper,
                                   FaiStandardApprovalMapper approvalMapper,
                                   SpcParameterMapper spcParameterMapper,
-                                  SpcProcessMapper spcProcessMapper) {
+                                  SpcProcessMapper spcProcessMapper,
+                                  FaiInspectionItemMapper faiItemMapper) {
         this.standardMapper = standardMapper;
         this.standardItemMapper = standardItemMapper;
         this.historyMapper = historyMapper;
         this.approvalMapper = approvalMapper;
         this.spcParameterMapper = spcParameterMapper;
         this.spcProcessMapper = spcProcessMapper;
+        this.faiItemMapper = faiItemMapper;
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
     }
@@ -105,6 +111,33 @@ public class FaiStandardServiceImpl implements FaiStandardService {
                 .eq(FaiInspectionStandard::getIsActive, "是")
                 .orderByDesc(FaiInspectionStandard::getStdVersion)
                 .last("LIMIT 1");
+        FaiInspectionStandard standard = standardMapper.selectOne(wrapper);
+        if (standard == null) {
+            return null;
+        }
+        return toResponse(standard);
+    }
+
+    @Override
+    public FaiStandardResponse latestActive(String itemCode, String itemType, String processName, Integer stdVersion, String plantCode) {
+        if (!StringUtils.hasText(itemCode) || !StringUtils.hasText(processName)) {
+            return null;
+        }
+        LambdaQueryWrapper<FaiInspectionStandard> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(FaiInspectionStandard::getPlantCode, plantCode)
+                .eq(FaiInspectionStandard::getItemCode, itemCode)
+                .eq(StringUtils.hasText(itemType), FaiInspectionStandard::getItemType, itemType)
+                .eq(FaiInspectionStandard::getProcessName, processName);
+        if (stdVersion != null) {
+            // 版本隔离：精确命中建单时固化的标准版本，不受后续新建版本影响
+            wrapper.eq(FaiInspectionStandard::getStdVersion, stdVersion)
+                    .eq(FaiInspectionStandard::getIsActive, "是");
+        } else {
+            // 历史数据无版本号时回退取最新激活版本
+            wrapper.eq(FaiInspectionStandard::getIsActive, "是")
+                    .orderByDesc(FaiInspectionStandard::getStdVersion);
+        }
+        wrapper.last("LIMIT 1");
         FaiInspectionStandard standard = standardMapper.selectOne(wrapper);
         if (standard == null) {
             return null;
@@ -212,11 +245,36 @@ public class FaiStandardServiceImpl implements FaiStandardService {
     public void deleteStandard(Long id, LoginUser loginUser) {
         FaiInspectionStandard standard = standardMapper.selectById(id);
         if (standard == null) {
-            return;
+            throw new BusinessException(ResultCode.NOT_FOUND, "标准不存在或已被删除");
         }
         String plantCode = loginUser.getPlantCode().name();
         if (!plantCode.equals(standard.getPlantCode())) {
             throw new BusinessException(ResultCode.FORBIDDEN, "无权删除其它分公司的标准");
+        }
+
+        // Guard: PENDING 审批检查 — 存在待审批的申请时拒绝删除
+        long pendingCount = approvalMapper.selectCount(
+                Wrappers.lambdaQuery(FaiStandardApproval.class)
+                        .eq(FaiStandardApproval::getStandardId, id)
+                        .eq(FaiStandardApproval::getApprovalStatus, "PENDING"));
+        if (pendingCount > 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "该标准存在待审批的申请，无法直接删除。请先处理审批流程");
+        }
+
+        // Guard: 已被检验记录引用的标准不允许删除，必须走停用（isActive=否）
+        // 双重守卫：先快速判断标记字段，再用实时 COUNT 做权威校验（防止标记遗漏的边界情况）
+        if (standard.getUsageStatus() != null && standard.getUsageStatus() > 0) {
+            throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
+                    "该标准已被检验记录引用，无法删除。如需废弃请改为停用（isActive=否）");
+        }
+        long refCount = faiItemMapper.selectCount(
+                Wrappers.lambdaQuery(FaiInspectionItem.class)
+                        .inSql(FaiInspectionItem::getStandardItemId,
+                            "SELECT id FROM fai_inspection_standard_item WHERE standard_id = " + id + " AND is_deleted = 0")
+                        .eq(FaiInspectionItem::getIsDeleted, 0));
+        if (refCount > 0) {
+            throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
+                    "该标准已被 " + refCount + " 条检验记录引用，无法删除。如需废弃请改为停用（isActive=否）");
         }
 
         // P0: 保存删除前快照
@@ -344,7 +402,7 @@ public class FaiStandardServiceImpl implements FaiStandardService {
         // P3：补充复审和统计字段
         resp.setLastReviewedAt(standard.getLastReviewedAt());
         resp.setReviewIntervalDays(standard.getReviewIntervalDays());
-        resp.setUsageCount(standard.getUsageCount());
+        resp.setUsageStatus(standard.getUsageStatus());
         resp.setLastUsedAt(standard.getLastUsedAt());
         LambdaQueryWrapper<FaiInspectionStandardItem> itemWrapper = new LambdaQueryWrapper<>();
         itemWrapper.eq(FaiInspectionStandardItem::getStandardId, standard.getId())

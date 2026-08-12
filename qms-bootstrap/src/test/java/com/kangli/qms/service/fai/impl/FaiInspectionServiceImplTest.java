@@ -33,6 +33,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -45,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -96,6 +99,57 @@ class FaiInspectionServiceImplTest {
         LoginUser loginUser = LoginUser.builder().userId(9L).realName("测试员").build();
 
         assertThrows(BusinessException.class, () -> service.signature(request, loginUser));
+    }
+
+    @Test
+    void signature_defersSpcImportUntilAfterCommit() {
+        FaiInspectionRecordMapper recordMapper = mock(FaiInspectionRecordMapper.class);
+        FaiInspectionItemMapper itemMapper = mock(FaiInspectionItemMapper.class);
+        FaiSignatureMapper signatureMapper = mock(FaiSignatureMapper.class);
+        SpcSubgroupService spcSubgroupService = mock(SpcSubgroupService.class);
+        SysUserMapper userMapper = mock(SysUserMapper.class);
+
+        FaiInspectionRecord record = new FaiInspectionRecord();
+        record.setId(101L);
+        record.setFaiNo("FAI-101");
+        record.setInspectionResult("合格");
+        record.setSignatureStatus("未签");
+        when(recordMapper.selectById(101L)).thenReturn(record);
+        when(itemMapper.selectList(any())).thenReturn(List.of());
+        when(signatureMapper.selectList(any())).thenReturn(List.of());
+
+        SysUser signer = new SysUser();
+        signer.setId(9L);
+        signer.setRealName("测试员");
+        signer.setStatus((short) 1);
+        signer.setPasswordHash(new BCryptPasswordEncoder().encode("correct-password"));
+        when(userMapper.selectById(9L)).thenReturn(signer);
+
+        FaiInspectionServiceImpl service = new FaiInspectionServiceImpl(
+                recordMapper, itemMapper, mock(FaiChangeTriggerMapper.class),
+                mock(FaiInspectionStandardMapper.class), mock(FaiInspectionStandardItemMapper.class),
+                signatureMapper, mock(FaiStandardService.class), spcSubgroupService,
+                mock(ExceptionService.class), userMapper, mock(AuditLogService.class));
+
+        FaiSignatureRequest request = new FaiSignatureRequest();
+        request.setFaiRecordId(101L);
+        request.setSignType("检验签");
+        request.setSignReason("检验完成");
+        request.setPassword("correct-password");
+        LoginUser loginUser = LoginUser.builder().userId(9L).realName("测试员").build();
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.signature(request, loginUser);
+            verifyNoInteractions(spcSubgroupService);
+            List<TransactionSynchronization> synchronizations = TransactionSynchronizationManager.getSynchronizations();
+            assertEquals(1, synchronizations.size());
+
+            synchronizations.get(0).afterCommit();
+            verify(spcSubgroupService).autoImportFromSignedFai(101L, loginUser);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     /**

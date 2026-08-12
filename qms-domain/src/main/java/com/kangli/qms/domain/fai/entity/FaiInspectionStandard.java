@@ -1,6 +1,7 @@
 package com.kangli.qms.domain.fai.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -58,8 +59,9 @@ public class FaiInspectionStandard implements Serializable {
     /** 复审间隔天数，默认 90 天（P3：定期复审提醒） */
     private Integer reviewIntervalDays;
 
-    /** 被引用次数（P3：执行情况统计） */
-    private Integer usageCount;
+    /** 引用状态（0=未引用，1=已引用）（P3：执行情况统计） */
+    @TableField("usage_count")
+    private Integer usageStatus;
 
     /** 最近引用时间（P3：执行情况统计） */
     private LocalDateTime lastUsedAt;

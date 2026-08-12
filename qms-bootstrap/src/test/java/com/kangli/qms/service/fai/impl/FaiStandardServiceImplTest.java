@@ -7,9 +7,12 @@ import org.apache.ibatis.session.Configuration;
 import com.kangli.qms.common.LoginUser;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandard;
 import com.kangli.qms.domain.fai.entity.FaiInspectionStandardItem;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionItemMapper;
 import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardItemMapper;
 import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardMapper;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionItemMapper;
 import com.kangli.qms.domain.fai.mapper.FaiInspectionStandardHistoryMapper;
+import com.kangli.qms.domain.fai.mapper.FaiInspectionItemMapper;
 import com.kangli.qms.domain.fai.mapper.FaiStandardApprovalMapper;
 import com.kangli.qms.domain.spc.entity.SpcParameter;
 import com.kangli.qms.domain.spc.entity.SpcProcess;
@@ -101,7 +104,8 @@ class FaiStandardServiceImplTest {
         FaiStandardServiceImpl service = new FaiStandardServiceImpl(
                 standardMapper, itemMapper, historyMapper,
                 mock(FaiStandardApprovalMapper.class),
-                mock(SpcParameterMapper.class), mock(SpcProcessMapper.class));
+                mock(SpcParameterMapper.class), mock(SpcProcessMapper.class),
+                mock(FaiInspectionItemMapper.class));
 
         FaiStandardSaveRequest req = reqWith("ASM", List.of(spcItem(null, "是")));
         assertDoesNotThrow(() -> service.createStandard(req, szUser()));
@@ -116,7 +120,7 @@ class FaiStandardServiceImplTest {
         FaiStandardServiceImpl service = new FaiStandardServiceImpl(
                 mock(FaiInspectionStandardMapper.class), mock(FaiInspectionStandardItemMapper.class),
                 mock(FaiInspectionStandardHistoryMapper.class), mock(FaiStandardApprovalMapper.class),
-                spcParamMapper, mock(SpcProcessMapper.class));
+                spcParamMapper, mock(SpcProcessMapper.class), mock(FaiInspectionItemMapper.class));
 
         FaiStandardSaveRequest req = reqWith("ASM", List.of(spcItem(100L, "是")));
         BusinessException ex = assertThrows(BusinessException.class, () -> service.createStandard(req, szUser()));
@@ -134,7 +138,7 @@ class FaiStandardServiceImplTest {
         FaiStandardServiceImpl service = new FaiStandardServiceImpl(
                 mock(FaiInspectionStandardMapper.class), mock(FaiInspectionStandardItemMapper.class),
                 mock(FaiInspectionStandardHistoryMapper.class), mock(FaiStandardApprovalMapper.class),
-                spcParamMapper, spcProcessMapper);
+                spcParamMapper, spcProcessMapper, mock(FaiInspectionItemMapper.class));
 
         FaiStandardSaveRequest req = reqWith("ASM", List.of(spcItem(200L, "是")));
         BusinessException ex = assertThrows(BusinessException.class, () -> service.createStandard(req, szUser()));
@@ -158,7 +162,7 @@ class FaiStandardServiceImplTest {
 
         FaiStandardServiceImpl service = new FaiStandardServiceImpl(
                 standardMapper, itemMapper, historyMapper, mock(FaiStandardApprovalMapper.class),
-                spcParamMapper, spcProcessMapper);
+                spcParamMapper, spcProcessMapper, mock(FaiInspectionItemMapper.class));
 
         FaiStandardSaveRequest req = reqWith("ASM", List.of(spcItem(300L, "是")));
         assertDoesNotThrow(() -> service.createStandard(req, szUser()));

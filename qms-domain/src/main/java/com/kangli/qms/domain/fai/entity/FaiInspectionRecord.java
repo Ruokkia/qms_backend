@@ -1,6 +1,7 @@
 package com.kangli.qms.domain.fai.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -56,6 +57,11 @@ public class FaiInspectionRecord implements Serializable {
 
     /** 建单时检验标准快照（JSON），含标准版本与参数项明细，用于审计追溯 */
     private String formSnapshot;
+
+    /** 建单时固化的检验标准版本号（std_version）。用于版本隔离：刷新标准/标准变更对比均按此版本定位，
+     *  不随标准库后续新建版本而变动。历史数据为空时回退取最新激活版本。 */
+    @TableField("std_version")
+    private Integer stdVersion;
 
     /** 最近一次同步到SPC子组的时间，空值表示从未同步 */
     private java.time.LocalDateTime spcSyncAt;

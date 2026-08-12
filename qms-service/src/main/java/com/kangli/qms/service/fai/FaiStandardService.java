@@ -36,6 +36,13 @@ public interface FaiStandardService {
     FaiStandardResponse latestActive(String itemCode, String itemType, String processName, String plantCode);
 
     /**
+     * 按 分类+代码+工序+指定版本号 定位标准（含参数项）。
+     * stdVersion 非 null 时精确命中该版本；为 null 时回退取最新激活版本（兼容历史数据）。
+     * 用于版本隔离：首件记录建单时固化的标准版本，其刷新标准/标准变更对比应锁定自身版本。
+     */
+    FaiStandardResponse latestActive(String itemCode, String itemType, String processName, Integer stdVersion, String plantCode);
+
+    /**
      * 新增标准模板（含参数项）。返回新标准 id。
      */
     Long createStandard(FaiStandardSaveRequest req, LoginUser loginUser);
