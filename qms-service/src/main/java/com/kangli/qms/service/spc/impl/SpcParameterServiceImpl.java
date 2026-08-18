@@ -172,16 +172,7 @@ public class SpcParameterServiceImpl implements SpcParameterService {
             throw new BusinessException(ResultCode.NOT_FOUND, "参数不存在");
         }
 
-        // Guard 1: 子组数据检查 — 存在子组数据时拒绝删除
-        long subgroupCount = subgroupMapper.selectCount(
-                Wrappers.lambdaQuery(SpcSubgroup.class)
-                        .eq(SpcSubgroup::getParamId, id)
-                        .eq(SpcSubgroup::getIsDeleted, 0));
-        if (subgroupCount > 0) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "该参数下存在子组数据，无法删除");
-        }
-
-        // Guard 2: FAI 检验标准引用检查 — 被检验标准引用时拒绝删除
+        // Guard: 标准引用检查 — 被检验标准引用时拒绝删除（与工序删除逻辑一致）
         long refCount = standardItemMapper.selectCount(
                 Wrappers.lambdaQuery(FaiInspectionStandardItem.class)
                         .eq(FaiInspectionStandardItem::getSpcParameterId, id)

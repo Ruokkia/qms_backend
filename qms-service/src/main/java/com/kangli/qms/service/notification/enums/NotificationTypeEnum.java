@@ -52,7 +52,18 @@ public enum NotificationTypeEnum {
     CAPA_MEASURES_APPROVED("CAPA_MEASURES_APPROVED", "CAPA措施审批通过"),
 
     /** CAPA 闭环 */
-    CAPA_CLOSED("CAPA_CLOSED", "CAPA闭环");
+    CAPA_CLOSED("CAPA_CLOSED", "CAPA闭环"),
+
+    // ---- 供应商物料变更管理通知场景 ----
+
+    /** 供应商物料变更提交（通知审批人） */
+    SUPPLIER_CHANGE_SUBMITTED("SUPPLIER_CHANGE_SUBMITTED", "供应商物料变更提交"),
+
+    /** 供应商物料变更批准（通知申请人维护标准 + 加严检验） */
+    SUPPLIER_CHANGE_APPROVED("SUPPLIER_CHANGE_APPROVED", "供应商物料变更批准"),
+
+    /** 供应商物料变更驳回（通知申请人） */
+    SUPPLIER_CHANGE_REJECTED("SUPPLIER_CHANGE_REJECTED", "供应商物料变更驳回");
 
     private final String code;
     private final String label;

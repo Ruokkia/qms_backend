@@ -363,8 +363,10 @@ public class IncomingTraceService {
                 child = buildNodeFromBinding(binding, "SEMI_FINISHED");
                 child.put("children", expand(targetBarcode, false, new LinkedHashSet<>(path), visited, graph));
             } else {
-                // 向下-物料：叶子节点
-                child = buildNodeFromBinding(binding, "MATERIAL");
+                // 向下-物料：优先取来料检验单，带出实际物料批号。
+                MaterialInspection material = graph.materialsByBarcode.get(targetBarcode);
+                child = material != null ? buildNodeFromMat(material)
+                        : buildNodeFromBinding(binding, "MATERIAL");
             }
             children.add(child);
         }
@@ -553,6 +555,8 @@ public class IncomingTraceService {
         node.put("name", StringUtils.hasText(name) ? name : barcode);
         node.put("productCode", isFinished ? null : binding.getMaterialCode());
         node.put("materialCode", isFinished ? null : binding.getMaterialCode());
+        // 绑定表没有保存来料批号；半成品可用关联的子项批号作为批次展示。
+        node.put("batchNo", "SEMI_FINISHED".equals(nodeType) ? binding.getSonLotNo() : null);
         node.put("materialBatchNo", null);
         node.put("specification", binding.getSpecModel());
         node.put("plantCode", binding.getPlantCode());
@@ -572,6 +576,7 @@ public class IncomingTraceService {
         node.put("name", StringUtils.hasText(fg.getProductName()) ? fg.getProductName() : fg.getProdBatchOrSn());
         node.put("productCode", fg.getMaterialCode());
         node.put("materialCode", null);
+        node.put("batchNo", fg.getProdBatchOrSn());
         node.put("materialBatchNo", null);
         node.put("specification", fg.getModelSpec());
         node.put("plantCode", fg.getPlantCode());
@@ -590,6 +595,7 @@ public class IncomingTraceService {
         node.put("name", StringUtils.hasText(mat.getMaterialName()) ? mat.getMaterialName() : mat.getMaterialBarcode());
         node.put("productCode", null);
         node.put("materialCode", mat.getMaterialCode());
+        node.put("batchNo", mat.getMaterialBatchNo());
         node.put("materialBatchNo", mat.getMaterialBatchNo());
         node.put("specification", mat.getSpecModel());
         node.put("plantCode", mat.getPlantCode());
@@ -624,6 +630,17 @@ public class IncomingTraceService {
                 FinishedGoodsInspection parentFg = selectFirstFg(barcode, currentPlant);
                 if (parentFg != null) {
                     return buildNodeFromFg(parentFg);
+                }
+            }
+            // 输入为物料条码时，优先使用来料检验单，才能返回物料批号。
+            if (barcode.equals(binding.getMaterialBarcode())) {
+                MaterialInspection material = matMapper.selectOne(
+                        new LambdaQueryWrapper<MaterialInspection>()
+                                .eq(MaterialInspection::getMaterialBarcode, barcode)
+                                .eq(MaterialInspection::getPlantCode, currentPlant)
+                                .last("LIMIT 1"));
+                if (material != null) {
+                    return buildNodeFromMat(material);
                 }
             }
             String nodeType = classifyRootNode(binding, barcode);

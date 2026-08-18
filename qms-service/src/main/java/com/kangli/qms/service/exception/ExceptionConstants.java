@@ -38,7 +38,7 @@ public final class ExceptionConstants {
     public static final String PROCESS_EIGHT_D = "8D";
     public static final String PROCESS_BOTH = "BOTH";
 
-    // ---- CAPA 相位（BOTH 模式专用） ----
+    // ---- CAPA 相位（CAPA / BOTH 模式） ----
     public static final String CAPA_PHASE_INITIATE = "INITIATE";
     public static final String CAPA_PHASE_ROOT_CAUSE_APPROVED = "ROOT_CAUSE_APPROVED";
     public static final String CAPA_PHASE_MEASURES_APPROVED = "MEASURES_APPROVED";

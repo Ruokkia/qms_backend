@@ -50,6 +50,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.springframework.context.ApplicationEventPublisher;
 
 class FaiInspectionServiceImplTest {
 
@@ -86,6 +87,7 @@ class FaiInspectionServiceImplTest {
                 mock(FaiStandardService.class),
                 mock(SpcSubgroupService.class),
                 mock(ExceptionService.class),
+                mock(ApplicationEventPublisher.class),
                 userMapper,
                 mock(AuditLogService.class));
 
@@ -128,8 +130,9 @@ class FaiInspectionServiceImplTest {
         FaiInspectionServiceImpl service = new FaiInspectionServiceImpl(
                 recordMapper, itemMapper, mock(FaiChangeTriggerMapper.class),
                 mock(FaiInspectionStandardMapper.class), mock(FaiInspectionStandardItemMapper.class),
-                signatureMapper, mock(FaiStandardService.class), spcSubgroupService,
-                mock(ExceptionService.class), userMapper, mock(AuditLogService.class));
+                signatureMapper,                 mock(FaiStandardService.class), spcSubgroupService,
+                mock(ExceptionService.class), mock(ApplicationEventPublisher.class),
+                userMapper, mock(AuditLogService.class));
 
         FaiSignatureRequest request = new FaiSignatureRequest();
         request.setFaiRecordId(101L);
@@ -206,6 +209,7 @@ class FaiInspectionServiceImplTest {
                 mock(FaiStandardService.class),
                 mock(SpcSubgroupService.class),
                 exceptionService,
+                mock(ApplicationEventPublisher.class),
                 userMapper,
                 mock(AuditLogService.class));
 
@@ -232,6 +236,7 @@ class FaiInspectionServiceImplTest {
                 mock(FaiStandardService.class),
                 mock(SpcSubgroupService.class),
                 mock(ExceptionService.class),
+                mock(ApplicationEventPublisher.class),
                 mock(SysUserMapper.class),
                 mock(AuditLogService.class));
     }
@@ -360,6 +365,7 @@ class FaiInspectionServiceImplTest {
                 mock(FaiInspectionStandardMapper.class), mock(FaiInspectionStandardItemMapper.class),
                 mock(FaiSignatureMapper.class), mock(FaiStandardService.class),
                 mock(SpcSubgroupService.class), mock(ExceptionService.class),
+                mock(ApplicationEventPublisher.class),
                 mock(SysUserMapper.class), mock(AuditLogService.class));
     }
 

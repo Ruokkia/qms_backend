@@ -100,9 +100,13 @@ public class SpcProcessServiceImpl implements SpcProcessService {
                 Wrappers.lambdaQuery(FaiInspectionStandard.class)
                         .eq(FaiInspectionStandard::getPlantCode, plantCode)
                         .eq(FaiInspectionStandard::getIsDeleted, 0)
+                        .isNotNull(FaiInspectionStandard::getProcessCode)
                         .select(FaiInspectionStandard::getProcessCode));
         Map<String, Long> result = new java.util.HashMap<>();
         for (FaiInspectionStandard s : standards) {
+            if (s == null) {
+                continue;
+            }
             String code = s.getProcessCode();
             if (code != null) {
                 result.merge(code, 1L, Long::sum);

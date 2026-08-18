@@ -32,6 +32,7 @@ import com.kangli.qms.domain.fai.mapper.FaiSignatureMapper;
 import com.kangli.qms.domain.auth.mapper.SysUserMapper;
 import com.kangli.qms.service.admin.AuditLogService;
 import com.kangli.qms.service.exception.ExceptionService;
+import com.kangli.qms.service.exception.event.UnqualifiedInspectionEvent;
 import com.kangli.qms.service.fai.FaiInspectionService;
 import com.kangli.qms.service.fai.SignatureIntegrity;
 import com.kangli.qms.service.spc.SpcSubgroupService;
@@ -40,6 +41,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
@@ -83,6 +85,7 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
     private final FaiStandardService standardService;
     private final SpcSubgroupService spcSubgroupService;
     private final ExceptionService exceptionService;
+    private final ApplicationEventPublisher eventPublisher;
     private final SysUserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
@@ -97,6 +100,7 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
                                     FaiStandardService standardService,
                                     SpcSubgroupService spcSubgroupService,
                                     ExceptionService exceptionService,
+                                    ApplicationEventPublisher eventPublisher,
                                     SysUserMapper userMapper,
                                     AuditLogService auditLogService) {
         this.recordMapper = recordMapper;
@@ -108,6 +112,7 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
         this.standardService = standardService;
         this.spcSubgroupService = spcSubgroupService;
         this.exceptionService = exceptionService;
+        this.eventPublisher = eventPublisher;
         this.userMapper = userMapper;
         this.auditLogService = auditLogService;
         this.passwordEncoder = new BCryptPasswordEncoder();
@@ -515,9 +520,9 @@ public class FaiInspectionServiceImpl implements FaiInspectionService {
                 trigger.setUpdatedBy(loginUser.getRealName());
                 changeTriggerMapper.updateById(trigger);
             }
-            // 异常单改为由 ExceptionAutoTriggerScheduler 定时轮询扫描库内不合格记录自动创建，
-            // 不再在接口线程内同步派生（去重由 createFromFai 保证，调度器重复扫描不会建重单）。
-            log.info("首件检验记录 {} 存在不合格项，将由定时调度自动创建异常单", record.getId());
+            // 首件不合格 → 发布事件，由 ExceptionTriggerListener 异步实时派生异常单
+            // （去重由 createFromFai 按 sourceId+sourceType 保证，重复事件不会建重单）。
+            eventPublisher.publishEvent(UnqualifiedInspectionEvent.fromFai(record));
         }
     }
 

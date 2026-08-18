@@ -76,25 +76,6 @@
         ORDER BY date
     </select>
 
-    <!-- ===== M1: 未关联异常单的不合格来料记录（对账用） ===== -->
-    <select id="selectUnlinkedUnqualified" resultType="com.kangli.qms.domain.incoming.entity.MaterialInspection">
-        SELECT
-            m.*
-        FROM qms.material_inspection m
-        WHERE m.is_deleted = 0
-          AND m.plant_code = #{plantCode}
-          AND m.inspection_result = #{inspectionResult}
-          AND m.created_at &gt;= #{startAt}
-          AND m.created_at &lt;= #{endAt}
-          AND NOT EXISTS (
-              SELECT 1 FROM qms.exception_order e
-              WHERE e.is_deleted = 0
-                AND e.source_type = #{sourceType}
-                AND e.source_id = m.id
-          )
-        ORDER BY m.created_at DESC
-    </select>
-
     <select id="countUnqualifiedBatches" resultType="int">
         SELECT COUNT(*)
         FROM qms.material_inspection

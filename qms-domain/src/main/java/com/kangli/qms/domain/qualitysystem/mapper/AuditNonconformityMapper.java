@@ -1,0 +1,1 @@
+package com.kangli.qms.domain.qualitysystem.mapper; import com.baomidou.mybatisplus.core.mapper.BaseMapper; import com.kangli.qms.domain.qualitysystem.entity.AuditNonconformity; public interface AuditNonconformityMapper extends BaseMapper<AuditNonconformity>{}

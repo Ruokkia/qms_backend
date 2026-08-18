@@ -31,6 +31,8 @@ class PermissionResolverMatrixTest {
             new String[]{"spc", "spc"},
             new String[]{"finished-goods", "finishedGoods"},
             new String[]{"suppliers", "supplier"},
+            new String[]{"supplier-assessments", "supplier"},
+            new String[]{"tooling", "tooling"},
             new String[]{"material-bindings", "material"},
             new String[]{"material-inspections", "incoming"},
             new String[]{"exceptions", "exception"},

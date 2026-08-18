@@ -13,9 +13,11 @@ import com.kangli.qms.domain.finishedgoods.mapper.FinishedGoodsInspectionMapper;
 import com.kangli.qms.service.finishedgoods.FinishedGoodsInspectionService;
 import com.kangli.qms.service.finishedgoods.dto.FinishedGoodsInspectionResponse;
 import com.kangli.qms.service.exception.ExceptionService;
+import com.kangli.qms.service.exception.event.UnqualifiedInspectionEvent;
 import com.kangli.qms.service.trace.NaturalKeyConflictMessageResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -44,6 +46,9 @@ public class FinishedGoodsInspectionServiceImpl
 
     @Autowired
     private ExceptionService exceptionService;
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
 
     public FinishedGoodsInspectionServiceImpl() {
     }
@@ -191,12 +196,11 @@ public class FinishedGoodsInspectionServiceImpl
                 record.setQcReviewer(loginUser.getRealName());
                 record.setQcReviewTime(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
             }
-            // 异常单改为由 ExceptionAutoTriggerScheduler 定时轮询扫描库内不合格记录自动创建，
-            // 不再在接口线程内同步派生。仅记录日志，建单动作移交调度器。
+            // 成品审核不合格且不合格数量 > 0 → 发布事件，异步实时派生异常单
             if ("不合格".equals(record.getInspectionResult())
                     && record.getUnqualifiedQty() != null
                     && record.getUnqualifiedQty().compareTo(BigDecimal.ZERO) > 0) {
-                log.info("成品检验记录 {} 审核不合格，将由定时调度自动创建异常单", record.getId());
+                eventPublisher.publishEvent(UnqualifiedInspectionEvent.fromFinishedGoods(record));
             }
         } else if (!APPROVED.equals(newQc)) {
             record.setQcReviewer(null);

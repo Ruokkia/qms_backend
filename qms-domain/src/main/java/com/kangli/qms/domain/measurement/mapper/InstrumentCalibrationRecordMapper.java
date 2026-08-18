@@ -1,0 +1,1 @@
+package com.kangli.qms.domain.measurement.mapper; import com.baomidou.mybatisplus.core.mapper.BaseMapper; import com.kangli.qms.domain.measurement.entity.InstrumentCalibrationRecord; public interface InstrumentCalibrationRecordMapper extends BaseMapper<InstrumentCalibrationRecord> { }

@@ -14,6 +14,10 @@ public class PermissionResolver {
         MODULES.put("spc", "spc");
         MODULES.put("finished-goods", "finishedGoods");
         MODULES.put("suppliers", "supplier");
+        MODULES.put("supplier-audits", "supplierAudit");
+        MODULES.put("supplier-assessments", "supplier");
+        MODULES.put("supplier-material-changes", "supplierMaterialChange");
+        MODULES.put("tooling", "tooling");
         MODULES.put("material-bindings", "material");
         MODULES.put("material-inspections", "incoming");
         MODULES.put("exceptions", "exception");
@@ -24,6 +28,9 @@ public class PermissionResolver {
         MODULES.put("production-defect-analytics", "productionDefect");
         MODULES.put("production-repairs", "productionDefect");
         MODULES.put("notifications", "notification");
+        MODULES.put("after-sales", "afterSales");
+        MODULES.put("measurement", "measurement");
+        MODULES.put("quality-system", "qualitySystem");
     }
 
     public PermissionRequirement resolve(String requestUri, String method) {

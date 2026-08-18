@@ -157,6 +157,16 @@
         ORDER BY occurrenceCount DESC, s.supplier_name
     </select>
 
+    <!-- ===== 全局最大异常单号（跨厂区，绕过 tenant 拦截器） ===== -->
+    <select id="selectMaxExceptionNo" resultType="java.lang.String">
+        SELECT exception_no
+        FROM qms.exception_order
+        WHERE is_deleted = 0
+          AND exception_no LIKE CONCAT(#{prefix}, '%')
+        ORDER BY exception_no DESC
+        LIMIT 1
+    </select>
+
 </mapper>
 
 

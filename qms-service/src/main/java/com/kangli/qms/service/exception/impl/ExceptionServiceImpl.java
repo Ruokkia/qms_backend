@@ -97,6 +97,9 @@ public class ExceptionServiceImpl implements ExceptionService {
     private static final String TABLE_NAME_EXCEPTION = "exception_order";
     private static final String ACTION_UPDATE = "UPDATE";
 
+    /** 异常单号生成锁：串行化当日编号递增，消除并发竞态（缺陷 L15 / L108） */
+    private final Object exceptionNoLock = new Object();
+
     @Lazy
     @Autowired
     private ExceptionServiceImpl self;
@@ -346,6 +349,10 @@ public class ExceptionServiceImpl implements ExceptionService {
                 throw new BusinessException(ResultCode.BAD_REQUEST, "客诉类异常单客户名称必填");
             }
         }
+        // 不良描述为必填（数据库 defect_desc NOT NULL，前端亦 required）
+        if (!StringUtils.hasText(order.getDefectDesc())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "不良描述 defectDesc 不能为空");
+        }
 
         order.setPlantCode(plantCode);
         order.setPlantName(loginUser.getPlantCode().getChineseName());
@@ -353,7 +360,6 @@ public class ExceptionServiceImpl implements ExceptionService {
         if (order.getCapaStatus() == null) {
             order.setCapaStatus("待发起");
         }
-        order.setExceptionNo(generateExceptionNo());
         order.setCreatedBy(loginUser.getRealName());
         order.setUpdatedBy(loginUser.getRealName());
 
@@ -536,7 +542,9 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setCapaStatus("待发起");
         order.setProcessType(null);
         order.setMaterialCode(inspection.getMaterialCode());
-        order.setDefectDesc(inspection.getDefectDesc());
+        order.setDefectDesc(StringUtils.hasText(inspection.getDefectDesc())
+                ? inspection.getDefectDesc()
+                : "来料检验不合格（记录 " + inspection.getRecordNo() + "），需发起整改");
         order.setDefectQty(inspection.getUnqualifiedQty());
         order.setTotalQty(inspection.getSubmittedQty());
         order.setDeadline(LocalDate.now().plusDays(decision.getDeadlineDays()));
@@ -548,7 +556,6 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setProblemFingerprint(buildProblemFingerprint(plantCode, inspection));
         order.setHandlingMethod(inspection.getHandlingMethod());
         order.setHandlerId(loginUser.getUserId());
-        order.setExceptionNo(generateExceptionNo());
         order.setPlantCode(plantCode);
         order.setPlantName(StringUtils.hasText(inspection.getPlantName())
                 ? inspection.getPlantName() : loginUser.getPlantCode().getChineseName());
@@ -587,20 +594,24 @@ public class ExceptionServiceImpl implements ExceptionService {
     }
 
     /**
-     * 插入异常单并兜底单号并发重号：若唯一索引 uq_exo_no 冲突（并发生成相同单号），
-     * 自动重新生成单号并重试，最多 3 次。对应缺陷 L15。
+     * 生成编号 + 插入异常单，锁内原子执行消除 SELECT-INSERT 竞态（缺陷 L15 / L108）。
+     * <p>
+     * 每次尝试都在锁内生成编号并插入；若冲突则重新生成编号重试（最多 3 次）。
      */
     private void insertExceptionWithRetry(ExceptionOrder order) {
         int attempts = 0;
         while (true) {
-            try {
-                exceptionOrderMapper.insert(order);
-                return;
-            } catch (DuplicateKeyException e) {
-                if (++attempts >= 3) {
-                    throw e;
+            synchronized (exceptionNoLock) {
+                order.setExceptionNo(generateExceptionNoInternal());
+                try {
+                    exceptionOrderMapper.insert(order);
+                    return;
+                } catch (DuplicateKeyException e) {
+                    if (++attempts >= 3) {
+                        throw e;
+                    }
+                    // 锁内重新生成编号后重试
                 }
-                order.setExceptionNo(generateExceptionNo());
             }
         }
     }
@@ -643,7 +654,6 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setResponseDeadline(LocalDateTime.now(ZoneId.of("Asia/Shanghai")).plusHours(decision.getResponseHours()));
         order.setRuleReason(decision.getRuleReason());
         order.setRepeatCount30Days(repeatCount30Days);
-        order.setExceptionNo(generateExceptionNo());
         order.setMaterialCode(record.getMaterialCode());
         order.setDefectDesc("首件检验不合格（FAI 记录 " + record.getFaiNo() + "），需发起整改");
         order.setCreatedBy(loginUser.getRealName());
@@ -699,7 +709,6 @@ public class ExceptionServiceImpl implements ExceptionService {
         order.setDeadline(LocalDate.now().plusDays(decision.getDeadlineDays()));
         order.setResponseDeadline(LocalDateTime.now(ZoneId.of("Asia/Shanghai")).plusHours(decision.getResponseHours()));
         order.setRuleReason(decision.getRuleReason());
-        order.setExceptionNo(generateExceptionNo());
         order.setCreatedBy(loginUser.getRealName());
         order.setUpdatedBy(loginUser.getRealName());
 
@@ -835,9 +844,10 @@ public class ExceptionServiceImpl implements ExceptionService {
         // 整改责任人：相关部门从已有人员中选择填写（区别于发起操作人；自动触发单发起时也可补填）
         update.setOwnerId(dto.getOwnerId());
         update.setOwnerName(dto.getOwnerName());
-        // 含 8D 流程（8D 或 BOTH）：CAPA 立项阶段，8D 可并行推进 D1-D4
-        // 8D 报告自身也需经 CAPA 根因审批 / 措施审批解锁 D5 / D6
-        if (ExceptionModuleHelper.processIncludes8D(processType)) {
+        // CAPA 治理相位追踪：BOTH/8D 以及纯 CAPA 流程均需记录相位，用于审批门禁与闭环检查
+        //   纯 CAPA：INITIATE → 根因审批(ROOT_CAUSE_APPROVED) → 措施审批(MEASURES_APPROVED) → 闭环(CLOSED)
+        //   BOTH/8D：INITIATE 完成后 8D D1-D4 可并行，D4→D5/D5→D6 受 capaPhase 门禁控制
+        if (ExceptionModuleHelper.processIncludes8D(processType) || "CAPA".equals(processType)) {
             update.setCapaPhase(ExceptionConstants.CAPA_PHASE_INITIATE);
         }
         exceptionOrderMapper.updateById(update);
@@ -858,7 +868,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         return exceptionOrderMapper.selectById(id);
     }
 
-    // ===== CAPA 相位审批（BOTH 模式专用） =====
+    // ===== CAPA 相位审批（CAPA / BOTH 模式） =====
 
     private static final java.util.List<String> CAPA_PHASE_VALUES = java.util.Arrays.asList(
             ExceptionConstants.CAPA_PHASE_INITIATE,
@@ -880,15 +890,17 @@ public class ExceptionServiceImpl implements ExceptionService {
 
     /**
      * 统一的 CAPA 相位推进方法。
-     * 校验 BOTH 模式 + 当前相位正确 + 目标相位合法，推进并记录审计日志。
+     * 校验流程模式 + 当前相位正确 + 目标相位合法，推进并记录审计日志。
      */
     private void approveCapaPhase(Long id, String targetPhase, String phaseLabel, String comment) {
         ExceptionOrder order = exceptionOrderMapper.selectById(id);
         if (order == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在：" + id);
         }
-        if (!ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "仅含 8D 报告（8D / BOTH）的流程需要 CAPA 相位审批，当前流程类型：" + order.getProcessType());
+        // 纯 8D 模式（不含 CAPA）不需要 CAPA 相位审批
+        if ("8D".equals(order.getProcessType())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, 
+                    "纯 8D 报告流程不需要 CAPA 相位审批，当前流程类型：" + order.getProcessType());
         }
 
         // 相位推进校验（不可回退、不可跳步）
@@ -918,6 +930,7 @@ public class ExceptionServiceImpl implements ExceptionService {
         ExceptionApprovalConfig capaConfig = approvalConfigService.resolveConfig(
                 "CAPA", capaConfigStage, order.getPlantCode());
         if (capaConfig != null && capaConfig.getNeedApproval() != null && capaConfig.getNeedApproval() == 1) {
+            // 配置驱动：需要审批时校验当前用户是否为配置指定的审批角色。
             ExceptionModuleHelper.requireApprovalPrivilege(capaConfig.getApproverRole());
         }
 
@@ -996,8 +1009,8 @@ public class ExceptionServiceImpl implements ExceptionService {
         update.setStatus("已闭环");
         update.setClosedAt(LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
         update.setCapaStatus("已完成");
-        // 含 8D 流程（8D 或 BOTH）：CAPA 治理流程闭环
-        if (ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+        // CAPA 治理流程闭环（BOTH/8D 及纯 CAPA 均需标记相位）
+        if (ExceptionModuleHelper.processIncludes8D(order.getProcessType()) || "CAPA".equals(order.getProcessType())) {
             update.setCapaPhase(ExceptionConstants.CAPA_PHASE_CLOSED);
         }
         update.setRemark(order.getRemark() != null ? order.getRemark() + "\n闭环原因：" + dto.getCloseReason() : "闭环原因：" + dto.getCloseReason());
@@ -1012,8 +1025,8 @@ public class ExceptionServiceImpl implements ExceptionService {
         // 发送状态变更通知
         sendExceptionStatusChangedNotification(order, loginUser, "已闭环");
 
-        // CAPA 闭环通知（BOTH 模式：配置驱动通知发起整改人/质量审核人）
-        if (ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+        // CAPA 闭环通知（配置驱动通知发起整改人/质量审核人）
+        if (ExceptionModuleHelper.processIncludes8D(order.getProcessType()) || "CAPA".equals(order.getProcessType())) {
             notifyByConfig(order, NotificationTypeEnum.CAPA_CLOSED.getCode(),
                     "CAPA 闭环通知",
                     "异常单【" + order.getExceptionNo() + "】已完成闭环。操作人：" + loginUser.getRealName());
@@ -1047,11 +1060,13 @@ public class ExceptionServiceImpl implements ExceptionService {
         if (order == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "异常单不存在：" + id);
         }
-        if (!ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+        // 纯 8D 模式（不含 CAPA）不需要 CAPA 相位审批
+        if ("8D".equals(order.getProcessType())) {
             return CapaPhaseApprovalReadinessVO.cannotApprove(order.getCapaPhase(),
-                    "非 BOTH 模式，无需 CAPA 相位审批");
+                    "纯 8D 报告流程无需 CAPA 相位审批");
         }
-        String phase = order.getCapaPhase();
+        // 兼容旧数据：capaPhase 为 null 时视为 INITIATE（待根因审批）
+        String phase = order.getCapaPhase() != null ? order.getCapaPhase() : ExceptionConstants.CAPA_PHASE_INITIATE;
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
             return CapaPhaseApprovalReadinessVO.cannotApprove(phase, "无法获取当前登录用户");
@@ -1060,7 +1075,8 @@ public class ExceptionServiceImpl implements ExceptionService {
         // 只有发起整改人（质量审核人）可以审批
         boolean isInitiator = loginUser.getUserId().equals(order.getInitiatedByUserId());
 
-        if (ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED.equals(phase)) {
+        // CAPA 根因审批就绪：当前相位为 INITIATE（尚未审批根因）
+        if (ExceptionConstants.CAPA_PHASE_INITIATE.equals(phase)) {
             if (isInitiator) {
                 return CapaPhaseApprovalReadinessVO.canApprove(phase, "待根因审批");
             }
@@ -1068,7 +1084,8 @@ public class ExceptionServiceImpl implements ExceptionService {
                     "仅发起整改人可审批根因，当前用户：" + loginUser.getRealName());
         }
 
-        if (ExceptionConstants.CAPA_PHASE_MEASURES_APPROVED.equals(phase)) {
+        // CAPA 措施审批就绪：当前相位为 ROOT_CAUSE_APPROVED（根因已审批，待审批措施）
+        if (ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED.equals(phase)) {
             if (isInitiator) {
                 return CapaPhaseApprovalReadinessVO.canApprove(phase, "待措施审批");
             }
@@ -1076,12 +1093,14 @@ public class ExceptionServiceImpl implements ExceptionService {
                     "仅发起整改人可审批措施，当前用户：" + loginUser.getRealName());
         }
 
-        if (ExceptionConstants.CAPA_PHASE_CLOSED.equals(phase)) {
-            return CapaPhaseApprovalReadinessVO.cannotApprove(phase, "CAPA 相位已闭环，无需审批");
+        // 措施已审批或已闭环：无需再次审批
+        if (ExceptionConstants.CAPA_PHASE_MEASURES_APPROVED.equals(phase)
+                || ExceptionConstants.CAPA_PHASE_CLOSED.equals(phase)) {
+            return CapaPhaseApprovalReadinessVO.cannotApprove(phase, "CAPA 相位已审批完成，无需审批");
         }
 
         return CapaPhaseApprovalReadinessVO.cannotApprove(phase,
-                "当前相位（" + phase + "）无需审批，请检查 8D 步骤是否已正确推进");
+                "当前相位（" + phase + "）无需审批，请检查流程是否已正确推进");
     }
 
     /**
@@ -1089,12 +1108,43 @@ public class ExceptionServiceImpl implements ExceptionService {
      */
     private List<CloseReadinessVO.CheckItem> evaluateCloseChecks(ExceptionOrder order) {
         List<CloseReadinessVO.CheckItem> checks = new ArrayList<>();
+        // CAPA 相位闭环门禁：纯 CAPA 及 BOTH 模式需 根因+措施 全部审批完成
+        if ("CAPA".equals(order.getProcessType()) || ExceptionModuleHelper.processIncludes8D(order.getProcessType())) {
+            checks.add(checkCapaPhase(order));
+        }
         checks.add(checkRectificationProcess(order));
         checks.add(checkRectificationPlans(order));
         checks.add(checkImprovementActions(order));
         checks.add(checkVerificationRecords(order));
         checks.add(check8DReport(order));
         return checks;
+    }
+
+    /** CAPA 相位闭环门禁：纯 CAPA / BOTH 模式需完成 根因审批 + 措施审批 */
+    private CloseReadinessVO.CheckItem checkCapaPhase(ExceptionOrder order) {
+        CloseReadinessVO.CheckItem item = new CloseReadinessVO.CheckItem();
+        item.setItem("CAPA 审批相位");
+        String phase = order.getCapaPhase();
+        if (phase == null) {
+            item.setStatus("FAIL");
+            item.setDetail("CAPA 审批尚未发起（需先完成根因审批与措施审批）");
+        } else if (ExceptionConstants.CAPA_PHASE_MEASURES_APPROVED.equals(phase)) {
+            item.setStatus("PASS");
+            item.setDetail("已通过根因审批与措施审批");
+        } else if (ExceptionConstants.CAPA_PHASE_CLOSED.equals(phase)) {
+            item.setStatus("PASS");
+            item.setDetail("CAPA 相位已闭环");
+        } else if (ExceptionConstants.CAPA_PHASE_INITIATE.equals(phase)) {
+            item.setStatus("FAIL");
+            item.setDetail("尚未完成根因审批（当前：CAPA 立项）");
+        } else if (ExceptionConstants.CAPA_PHASE_ROOT_CAUSE_APPROVED.equals(phase)) {
+            item.setStatus("FAIL");
+            item.setDetail("尚未完成措施审批（当前：根因已审批）");
+        } else {
+            item.setStatus("FAIL");
+            item.setDetail("CAPA 相位未知：" + phase);
+        }
+        return item;
     }
 
     /** 检查 1：整改流程是否已发起 */
@@ -1853,19 +1903,17 @@ public class ExceptionServiceImpl implements ExceptionService {
     }
 
     /**
-     * 生成异常单号：EX-YYYYMMDD-NNN。
+     * 生成异常单号：EX-YYYYMMDD-NNN（无锁版本，由调用方 {@link #insertExceptionWithRetry} 持有锁）。
      */
-    private String generateExceptionNo() {
+    private String generateExceptionNoInternal() {
         String datePart = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        LambdaQueryWrapper<ExceptionOrder> wrapper = new LambdaQueryWrapper<>();
-        wrapper.likeRight(ExceptionOrder::getExceptionNo, "EX-" + datePart + "-")
-                .orderByDesc(ExceptionOrder::getExceptionNo)
-                .last("LIMIT 1");
-        ExceptionOrder latest = exceptionOrderMapper.selectOne(wrapper);
+        String prefix = "EX-" + datePart + "-";
+        // 异常单号 EX-YYYYMMDD-NNN 全局唯一（uq_exo_no 不含 plant_code），
+        // 必须跨厂区查询最大编号（绕过 tenant 拦截器），避免按厂过滤后与其他厂区已有编号冲突。
+        String latestNo = exceptionOrderMapper.selectMaxExceptionNo(prefix);
         int seq = 1;
-        if (latest != null) {
-            String no = latest.getExceptionNo();
-            String seqStr = no.substring(no.lastIndexOf('-') + 1);
+        if (latestNo != null) {
+            String seqStr = latestNo.substring(latestNo.lastIndexOf('-') + 1);
             seq = Integer.parseInt(seqStr) + 1;
         }
         return String.format("EX-%s-%03d", datePart, seq);

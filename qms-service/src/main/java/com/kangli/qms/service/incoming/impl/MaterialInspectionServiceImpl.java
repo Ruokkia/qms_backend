@@ -12,8 +12,10 @@ import com.kangli.qms.domain.incoming.vo.KeySupplierTrendVO;
 import com.kangli.qms.domain.incoming.vo.MaterialInspectionStatsVO;
 import com.kangli.qms.domain.incoming.vo.SupplierRankItemVO;
 import com.kangli.qms.service.exception.ExceptionService;
+import com.kangli.qms.service.exception.event.UnqualifiedInspectionEvent;
 import com.kangli.qms.service.incoming.MaterialInspectionService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,9 +32,12 @@ public class MaterialInspectionServiceImpl
         implements MaterialInspectionService {
 
     private final ExceptionService exceptionService;
+    private final ApplicationEventPublisher eventPublisher;
 
-    public MaterialInspectionServiceImpl(ExceptionService exceptionService) {
+    public MaterialInspectionServiceImpl(ExceptionService exceptionService,
+                                         ApplicationEventPublisher eventPublisher) {
         this.exceptionService = exceptionService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -63,10 +68,9 @@ public class MaterialInspectionServiceImpl
         record.setCreatedBy(loginUser.getRealName());
         record.setUpdatedBy(loginUser.getRealName());
         baseMapper.insert(record);
-        // 异常单改为由 ExceptionAutoTriggerScheduler 定时轮询扫描库内不合格记录自动创建，
-        // 不再在接口线程内同步派生（解耦检验业务与异常生成）。
+        // 检验不合格 → 发布事件，由 ExceptionTriggerListener 异步实时派生异常单（解耦检验业务与异常生成）。
         if ("不合格".equals(record.getInspectionResult())) {
-            log.info("来料检验记录 {} 结论为不合格，将由定时调度自动创建异常单", record.getId());
+            eventPublisher.publishEvent(UnqualifiedInspectionEvent.fromMaterial(record));
         }
         return record;
     }
@@ -103,13 +107,9 @@ public class MaterialInspectionServiceImpl
             return false;
         }
         MaterialInspection after = getById(entity.getId());
-        // 异常单改为由 ExceptionAutoTriggerScheduler 定时轮询扫描库内不合格记录自动创建，
-        // 不再在接口线程内同步派生。仅记录日志，建单动作移交调度器。
+        // 检验不合格（含合格→不合格状态变更）→ 发布事件，异步实时派生异常单。
         if ("不合格".equals(after.getInspectionResult())) {
-            log.info("来料检验记录 {} 更新后结论为不合格，将由定时调度自动创建异常单", after.getId());
-            if ("合格".equals(oldResult)) {
-                log.info("来料检验状态由合格变为不合格，待定时调度创建异常单：materialInspectionId={}", after.getId());
-            }
+            eventPublisher.publishEvent(UnqualifiedInspectionEvent.fromMaterial(after));
         }
         return true;
     }

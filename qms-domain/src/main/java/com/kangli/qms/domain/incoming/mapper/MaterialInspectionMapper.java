@@ -54,14 +54,6 @@ public interface MaterialInspectionMapper extends BaseMapper<MaterialInspection>
                                                        @Param("startDate") String startDate,
                                                        @Param("endDate") String endDate);
 
-    /** 查询未关联异常单的不合格来料检验记录 */
-    @InterceptorIgnore(tenantLine = "true")
-    List<MaterialInspection> selectUnlinkedUnqualified(@Param("plantCode") String plantCode,
-                                                         @Param("inspectionResult") String inspectionResult,
-                                                         @Param("sourceType") String sourceType,
-                                                         @Param("startAt") LocalDateTime startAt,
-                                                         @Param("endAt") LocalDateTime endAt);
-
     /** 同分公司、供应商、物料在指定日期窗口内的不合格批次数 */
     @InterceptorIgnore(tenantLine = "true")
     int countUnqualifiedBatches(@Param("plantCode") String plantCode,

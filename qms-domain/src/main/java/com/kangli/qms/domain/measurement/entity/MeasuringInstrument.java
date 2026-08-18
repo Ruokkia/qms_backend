@@ -1,0 +1,3 @@
+package com.kangli.qms.domain.measurement.entity;
+import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.time.*;
+@Data @TableName(value="measuring_instrument",schema="qms") public class MeasuringInstrument { @TableId(type=IdType.AUTO) private Long id; private String instrumentCode,instrumentName,model,specification,accuracyGrade,measurementRange,factorySerialNo,manufacturer,departmentName,storageLocation,keeperName,status,calibrationAgency,remark,qrCode,plantCode,plantName,createdBy,updatedBy; private LocalDate purchaseDate,lastCalibrationDate,nextCalibrationDate; private Integer calibrationCycleMonths; @TableLogic private Short isDeleted; @Version private Integer version; private LocalDateTime createdAt,updatedAt; }

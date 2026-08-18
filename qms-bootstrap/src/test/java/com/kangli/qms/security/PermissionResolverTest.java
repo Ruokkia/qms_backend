@@ -46,6 +46,16 @@ class PermissionResolverTest {
     }
 
     @Test
+    void mapsSupplierAssessmentAndToolingRoutesToTheirModules() {
+        assertEquals("supplier", resolver.resolve("/api/v1/supplier-assessments", "GET").getModuleCode());
+        assertEquals(PermissionAction.EDIT,
+                resolver.resolve("/api/v1/supplier-assessments", "POST").getAction());
+        assertEquals("tooling", resolver.resolve("/api/v1/tooling/12/records", "GET").getModuleCode());
+        assertEquals(PermissionAction.EDIT,
+                resolver.resolve("/api/v1/tooling/12/usage", "POST").getAction());
+    }
+
+    @Test
     void treatsMarkingOwnNotificationReadAsViewPermission() {
         assertEquals(PermissionAction.VIEW,
                 resolver.resolve("/api/v1/notifications/12/read", "POST").getAction());

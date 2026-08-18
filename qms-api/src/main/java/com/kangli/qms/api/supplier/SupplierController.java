@@ -44,8 +44,11 @@ public class SupplierController {
         LambdaQueryWrapper<Supplier> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Supplier::getPlantCode, loginUser.getPlantCode().name());
         if (StringUtils.hasText(keyword)) {
-            wrapper.and(w -> w.like(Supplier::getSupplierName, keyword)
-                    .or().like(Supplier::getSupplierCode, keyword));
+            // 统一转大写再模糊匹配，规避 PostgreSQL LIKE 大小写敏感问题
+            // （供应商编码多为 SUP-SZ-01 这类大写格式）
+            final String kw = keyword.trim().toUpperCase();
+            wrapper.and(w -> w.like(Supplier::getSupplierName, kw)
+                    .or().like(Supplier::getSupplierCode, kw));
         }
         wrapper.orderByDesc(Supplier::getCreatedAt);
         return R.ok(PageResult.of(supplierService.page(pageObj, wrapper)));

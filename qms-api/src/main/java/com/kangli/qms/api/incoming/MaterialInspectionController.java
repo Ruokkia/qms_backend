@@ -58,6 +58,7 @@ public class MaterialInspectionController {
         if (StringUtils.hasText(keyword)) {
             wrapper.and(w -> w.like(MaterialInspection::getRecordNo, keyword)
                     .or().like(MaterialInspection::getMaterialBatchNo, keyword)
+                    .or().like(MaterialInspection::getMaterialBarcode, keyword)
                     .or().like(MaterialInspection::getMaterialName, keyword)
                     .or().like(MaterialInspection::getMaterialCode, keyword)
                     .or().like(MaterialInspection::getSupplierName, keyword));

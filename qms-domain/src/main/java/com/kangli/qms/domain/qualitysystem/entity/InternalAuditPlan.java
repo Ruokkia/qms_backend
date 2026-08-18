@@ -1,0 +1,2 @@
+package com.kangli.qms.domain.qualitysystem.entity; import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.time.*;
+@Data @TableName(value="internal_audit_plan",schema="qms") public class InternalAuditPlan{@TableId(type=IdType.AUTO)private Long id;private Integer auditYear;private String auditScope,auditBasis,auditorGroup,status,implementationSummary,plantCode,plantName,createdBy,updatedBy;private LocalDate plannedDate;@TableLogic private Short isDeleted;@Version private Integer version;private LocalDateTime createdAt,updatedAt;}

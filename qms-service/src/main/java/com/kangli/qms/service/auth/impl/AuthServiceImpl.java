@@ -68,7 +68,7 @@ public class AuthServiceImpl implements AuthService {
     private static final String SHANGHAI_ZONE = "Asia/Shanghai";
     private static final List<String> SUPER_ADMIN_MODULES = Arrays.asList(
             "systemAdmin", "trace", "incoming", "exception", "fai", "spc",
-            "productionDefect", "processTools", "finishedGoods");
+            "productionDefect", "processTools", "finishedGoods", "supplier", "supplierAudit");
 
     private final SysUserMapper userMapper;
     private final SysRoleMapper roleMapper;

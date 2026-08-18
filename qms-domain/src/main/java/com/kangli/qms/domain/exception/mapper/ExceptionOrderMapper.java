@@ -62,4 +62,12 @@ public interface ExceptionOrderMapper extends BaseMapper<ExceptionOrder> {
                                                             @Param("startDate") String startDate,
                                                             @Param("endDate") String endDate,
                                                             @Param("minCount") Integer minCount);
+
+    /**
+     * 全局查询指定前缀下的最大异常单号（跨厂区，绕过 tenant 拦截器）。
+     * <p>异常单号 EX-YYYYMMDD-NNN 为全局唯一（uq_exo_no 不含 plant_code），
+     * 编号生成必须跨厂区取最大序号，避免按厂过滤后与其他厂区已有编号冲突。</p>
+     */
+    @InterceptorIgnore(tenantLine = "true")
+    String selectMaxExceptionNo(@Param("prefix") String prefix);
 }

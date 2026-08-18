@@ -1,10 +1,13 @@
 package com.kangli.qms.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import com.kangli.qms.security.PermissionInterceptor;
 
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 
@@ -17,6 +20,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     private final JwtInterceptor jwtInterceptor;
     private final PermissionInterceptor permissionInterceptor;
+
+    @Value("${qms.file-storage.base-dir:./uploads}")
+    private String fileStorageBaseDir;
 
     public WebMvcConfig(JwtInterceptor jwtInterceptor, PermissionInterceptor permissionInterceptor) {
         this.jwtInterceptor = jwtInterceptor;
@@ -36,7 +42,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
             "/v3/api-docs",
             "/webjars/**",
             "/favicon.ico",
-            "/error"
+            "/error",
+            "/files/**"
     );
 
     @Override
@@ -47,5 +54,13 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(permissionInterceptor)
                 .addPathPatterns("/api/**")
                 .excludePathPatterns(EXCLUDE_PATHS);
+    }
+
+    /** 上传文件静态资源映射：/files/** → 本地存储目录 */
+    @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        String location = Paths.get(fileStorageBaseDir).toAbsolutePath().normalize().toString() + java.io.File.separator;
+        registry.addResourceHandler("/files/**")
+                .addResourceLocations("file:" + location);
     }
 }

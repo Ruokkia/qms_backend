@@ -1,0 +1,1 @@
+package com.kangli.qms.domain.measurement.mapper; import com.baomidou.mybatisplus.core.mapper.BaseMapper; import com.kangli.qms.domain.measurement.entity.InstrumentScrapRecord; public interface InstrumentScrapRecordMapper extends BaseMapper<InstrumentScrapRecord> { }

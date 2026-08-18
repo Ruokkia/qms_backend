@@ -34,7 +34,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import org.springframework.context.ApplicationEventPublisher;
+
 
 /**
  * P0 缺口补测：M1 来料检验业务逻辑（plantCode 注入 / 不合格自动建单 / updateById 防重）。
@@ -71,7 +74,7 @@ class MaterialInspectionServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new MaterialInspectionServiceImpl(exceptionService);
+        service = new MaterialInspectionServiceImpl(exceptionService, mock(ApplicationEventPublisher.class));
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
         LoginUserHolder.set(LoginUser.builder()
                 .userId(1L).account("sz-user").realName("张三").plantCode(PlantCode.SZ).build());
